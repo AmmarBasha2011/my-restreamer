@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Advanced Restreamer</title>
+  <style>
+    :root { --primary-color: #6f42c1; --danger-color: #dc3545; --light-gray: #f8f9fa; --gray: #6c757d; --white: #fff; --border-color: #dee2e6; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; margin: 0; background-color: var(--light-gray); color: #343a40; }
+    .header { background-color: var(--primary-color); color: var(--white); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+    .header h1 { margin: 0; font-size: 1.5rem; }
+    .container { max-width: 90%; margin: 2rem auto; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 2rem; }
+    .card { background: var(--white); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); display: flex; flex-direction: column; }
+    .card-header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+    .card-body { padding: 1.5rem; flex-grow: 1; }
+    .card-footer { padding: 1rem 1.5rem; background-color: #f8f9fa; border-top: 1px solid var(--border-color); }
+    h2 { margin: 0; font-size: 1.2rem; }
+    button { background-color: var(--primary-color); color: var(--white); border: none; border-radius: 5px; padding: 0.6rem 1.2rem; cursor: pointer; font-size: 0.95rem; transition: background-color 0.2s; }
+    button:hover { filter: brightness(90%); }
+    button.danger { background-color: var(--danger-color); }
+    button:disabled { background-color: var(--gray); cursor: not-allowed; }
+    input[type="text"], input[type="file"] { width: 100%; padding: 0.5rem; border: 1px solid #ced4da; border-radius: 4px; margin-bottom: 1rem; box-sizing: border-box; }
+    ul { list-style: none; padding: 0; max-height: 150px; overflow-y: auto; }
+    .playlist-item { display: flex; justify-content: space-between; align-items: center; background: #f1f3f5; padding: 0.5rem 1rem; border-radius: 4px; margin-bottom: 0.5rem; font-size: 0.9rem; }
+    .status-light { height: 12px; width: 12px; background-color: var(--gray); border-radius: 50%; transition: background-color 0.5s; }
+    .status-light.active { background-color: #28a745; box-shadow: 0 0 8px #28a745; }
+    #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 1rem 2rem; border-radius: 5px; opacity: 0; visibility: hidden; transition: opacity 0.5s, visibility 0.5s; z-index: 1000; }
+    #toast.show { opacity: 1; visibility: visible; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>Advanced Restreamer</h1>
+    <button id="add-dest-btn">+ Add New Stream Channel</button>
+  </div>
+
+  <div class="container">
+    <div id="destinations-grid" class="grid"></div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+    const grid = document.getElementById('destinations-grid');
+    const addDestBtn = document.getElementById('add-dest-btn');
+    const toast = document.getElementById('toast');
+
+    const api = {
+      get: (endpoint) => fetch(endpoint).then(res => res.ok ? res.json() : Promise.reject(res)),
+      post: (endpoint, body) => fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+      delete: (endpoint) => fetch(endpoint, { method: 'DELETE' })
+    };
+
+    function createChannelCard(dest) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.id = `dest-${dest.id}`;
+      card.innerHTML = `
+        <div class="card-header">
+          <h2>${dest.name}</h2>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div class="status-light ${dest.isStreaming ? 'active' : ''}"></div>
+            <button class="danger" onclick="deleteDestination('${dest.id}')">Delete</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <strong>Playlist</strong>
+          <ul id="playlist-${dest.id}">${dest.playlist.length > 0 ? dest.playlist.map(f => `<li class="playlist-item">${f}</li>`).join('') : '<li>Empty</li>'}</ul>
+        </div>
+        <div class="card-footer">
+          <form class="upload-form" data-id="${dest.id}">
+            <strong>Upload File</strong>
+            <input type="file" name="video" accept="video/mp4,video/webm,video/quicktime" required>
+            <button type="submit" ${dest.isStreaming ? 'disabled' : ''}>Upload Video</button>
+          </form>
+          <hr style="margin: 1.5rem 0; border-color: #e9ecef;">
+          <form class="youtube-form" data-id="${dest.id}">
+            <strong>Add from YouTube</strong>
+            <input type="text" name="url" placeholder="https://www.youtube.com/watch?v=..." required>
+            <button type="submit" ${dest.isStreaming ? 'disabled' : ''}>Add From URL</button>
+          </form>
+          <div style="margin-top: 1rem; display: flex; justify-content: space-between;">
+            <div>
+              <button onclick="startStream('${dest.id}')" ${dest.isStreaming ? 'disabled' : ''}>▶️ Start</button>
+              <button class="danger" onclick="stopStream('${dest.id}')" ${!dest.isStreaming ? 'disabled' : ''}>⏹️ Stop</button>
+            </div>
+            <button class="danger" onclick="clearPlaylist('${dest.id}')" ${dest.isStreaming ? 'disabled' : ''}>Clear Playlist</button>
+          </div>
+        </div>
+      `;
+      return card;
+    }
+
+    async function refreshDestinations() {
+      try {
+        const destinations = await api.get('/api/destinations');
+        grid.innerHTML = ''; // Clear grid
+        destinations.forEach(dest => grid.appendChild(createChannelCard(dest)));
+        attachUploadHandlers();
+        attachYoutubeHandlers();
+      } catch (err) {
+        showToast('Error fetching data.', true);
+      }
+    }
+
+    function attachUploadHandlers() {
+      document.querySelectorAll('.upload-form').forEach(form => {
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const id = form.dataset.id;
+          const formData = new FormData(form);
+          const btn = form.querySelector('button');
+          btn.textContent = 'Uploading...';
+          btn.disabled = true;
+          const response = await fetch(`/api/upload/${id}`, { method: 'POST', body: formData });
+          showToast(await response.text(), !response.ok);
+          btn.textContent = 'Upload Video';
+          btn.disabled = false;
+          if (response.ok) {
+            form.reset();
+            refreshDestinations();
+          }
+        });
+      });
+    }
+
+    function attachYoutubeHandlers() {
+      document.querySelectorAll('.youtube-form').forEach(form => {
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const id = form.dataset.id;
+          const url = form.querySelector('input[name="url"]').value;
+          const btn = form.querySelector('button');
+          btn.textContent = 'Downloading...';
+          btn.disabled = true;
+
+          const response = await api.post(`/api/youtube/add/${id}`, { url });
+          showToast(await response.text(), !response.ok);
+          
+          btn.textContent = 'Add From URL';
+          btn.disabled = false;
+          if (response.ok) {
+            form.reset();
+            // No need to refresh here, the periodic refresh will catch it
+          }
+        });
+      });
+    }
+
+    addDestBtn.addEventListener('click', async () => {
+      const name = prompt('Enter a name for the new stream channel:');
+      if (!name) return;
+      const key = prompt(`Enter the stream key for "${name}":`);
+      if (!key) return;
+
+      const response = await api.post('/api/destinations', { name, key });
+      showToast(await response.text(), !response.ok);
+      if (response.ok) refreshDestinations();
+    });
+
+    window.deleteDestination = async (id) => {
+      if (confirm('Are you sure you want to delete this channel and all its videos?')) {
+        const response = await api.delete(`/api/destinations/${id}`);
+        showToast(await response.text(), !response.ok);
+        if (response.ok) refreshDestinations();
+      }
+    };
+
+    window.startStream = async (id) => {
+      const response = await api.post(`/api/stream/start/${id}`, {});
+      showToast(await response.text(), !response.ok);
+      if (response.ok) setTimeout(refreshDestinations, 1000);
+    };
+
+    window.stopStream = async (id) => {
+      const response = await api.post(`/api/stream/stop/${id}`, {});
+      showToast(await response.text(), !response.ok);
+      if (response.ok) setTimeout(refreshDestinations, 1000);
+    };
+
+    window.clearPlaylist = async (id) => {
+      if (confirm('Are you sure you want to clear this playlist?')) {
+        const response = await api.post(`/api/playlist/clear/${id}`, {});
+        showToast(await response.text(), !response.ok);
+        if (response.ok) refreshDestinations();
+      }
+    };
+
+    function showToast(message, isError = false) {
+      toast.textContent = message;
+      toast.style.backgroundColor = isError ? 'var(--danger-color)' : '#333';
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      refreshDestinations();
+      setInterval(refreshDestinations, 7000); // Periodically refresh status
+    });
+  </script>
+</body>
+</html>
