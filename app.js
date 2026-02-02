@@ -1,7 +1,8 @@
 import express from 'express';
 import multer from 'multer';
 import { spawn } from 'child_process';
-import { Innertube, UniversalCache } from 'youtubei.js';
+import { Innertube, UniversalCache, Platform } from 'youtubei.js';
+import { Jinter } from 'jintr';
 import { Readable } from 'stream';
 import path from 'path';
 import fs from 'fs';
@@ -124,31 +125,16 @@ const extractVideoId = (url) => {
   return match ? match[1] : null;
 };
 
-app.post('/api/youtube/add/:id', async (req, res) => {
-  const { id } = req.params;
-  const { url } = req.body;
-  console.log(`[API] Action: Add from YouTube | Destination ID: ${id} | URL: ${url}`);
+const extractPlaylistId = (url) => {
+  const match = url.match(/[&?]list=([A-Za-z0-9_-]+)/);
+  return match ? match[1] : null;
+};
 
-  if (!url) return res.status(400).send('YouTube URL is required.');
-
-  const videoId = extractVideoId(url);
-  if (!videoId) return res.status(400).send('Invalid YouTube URL.');
-
-  const destDir = path.join(PLAYLISTS_DIR, id);
-  if (!fs.existsSync(destDir)) return res.status(404).send('Destination not found.');
-
-  res.status(202).send('Download started. The video will be added to the playlist shortly.');
-
+const downloadVideo = async (yt, videoId, destDir) => {
   try {
-    const yt = await Innertube.create({
-      cache: new UniversalCache(false),
-      generate_session_store: true,
-      client: 'TV'
-    });
-
     console.log(`[youtubei.js] Fetching info for: ${videoId}`);
     const info = await yt.getInfo(videoId);
-    const title = info.basic_info.title.replace(/[\\/:*?"<>|]/g, '_');
+    const title = (info.basic_info?.title || videoId).replace(/[\\/:*?"<>|]/g, '_');
     const filename = `${title}.mp4`;
     const outputPath = path.join(destDir, filename);
 
@@ -162,16 +148,73 @@ app.post('/api/youtube/add/:id', async (req, res) => {
     const fileStream = fs.createWriteStream(outputPath);
     Readable.fromWeb(stream).pipe(fileStream);
 
-    fileStream.on('finish', () => {
-      console.log(`[youtubei.js] Download finished successfully: ${filename}`);
+    return new Promise((resolve, reject) => {
+      fileStream.on('finish', () => {
+        console.log(`[youtubei.js] Download finished successfully: ${filename}`);
+        resolve();
+      });
+      fileStream.on('error', (err) => {
+        console.error(`[youtubei.js] File stream error for ${videoId}:`, err.message);
+        reject(err);
+      });
+    });
+  } catch (err) {
+    console.error(`[youtubei.js] Error downloading video ${videoId}:`, err.message);
+    throw err;
+  }
+};
+
+app.post('/api/youtube/add/:id', async (req, res) => {
+  const { id } = req.params;
+  const { url } = req.body;
+  console.log(`[API] Action: Add from YouTube | Destination ID: ${id} | URL: ${url}`);
+
+  if (!url) return res.status(400).send('YouTube URL is required.');
+
+  const videoId = extractVideoId(url);
+  const playlistId = extractPlaylistId(url);
+
+  if (!videoId && !playlistId) return res.status(400).send('Invalid YouTube URL.');
+
+  const destDir = path.join(PLAYLISTS_DIR, id);
+  if (!fs.existsSync(destDir)) return res.status(404).send('Destination not found.');
+
+  res.status(202).send('Download process started.');
+
+  try {
+    // Provide JS evaluator for deciphering
+    Platform.shim.eval = (code, env) => {
+      const runtime = new Jinter(code);
+      runtime.scope = env;
+      return runtime.evaluate();
+    };
+
+    const yt = await Innertube.create({
+      cache: new UniversalCache(false),
+      generate_session_store: true,
+      client: 'TV'
     });
 
-    fileStream.on('error', (err) => {
-      console.error(`[youtubei.js] File stream error:`, err.message);
-    });
+    if (playlistId) {
+      console.log(`[youtubei.js] Fetching playlist: ${playlistId}`);
+      const playlist = await yt.getPlaylist(playlistId);
+      console.log(`[youtubei.js] Found ${playlist.videos.length} videos in playlist.`);
+
+      for (const video of playlist.videos) {
+        if (video.id) {
+          try {
+            await downloadVideo(yt, video.id, destDir);
+          } catch (e) {
+            console.error(`[youtubei.js] Skipping video ${video.id} due to error.`);
+          }
+        }
+      }
+    } else {
+      await downloadVideo(yt, videoId, destDir);
+    }
 
   } catch (err) {
-    console.error(`[youtubei.js] Error downloading ${url}:`, err.message);
+    console.error(`[youtubei.js] Error in download process for ${url}:`, err.message);
   }
 });
 
