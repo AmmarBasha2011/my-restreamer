@@ -12,6 +12,18 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Provide JS evaluator for deciphering (Fix for youtubei.js + jintr)
+Platform.shim.eval = (data, args) => {
+  if (data.player_script) {
+    const runtime = new Jinter();
+    for (const [key, value] of Object.entries(args)) {
+      runtime.scope.set(key, value);
+    }
+    return runtime.evaluate(data.player_script);
+  }
+  return data;
+};
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -188,13 +200,6 @@ app.post('/api/youtube/add/:id', async (req, res) => {
   res.status(202).send('Download process started.');
 
   try {
-    // Provide JS evaluator for deciphering
-    Platform.shim.eval = (code, env) => {
-      const runtime = new Jinter(code);
-      runtime.scope = env;
-      return runtime.evaluate();
-    };
-
     const yt = await Innertube.create({
       cache: new UniversalCache(false),
       generate_session_store: true,
