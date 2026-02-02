@@ -3,6 +3,7 @@
 
 # Uploads
 /uploads
+/playlists
 
 # Env
 .env
