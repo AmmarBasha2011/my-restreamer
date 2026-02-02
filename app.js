@@ -1,12 +1,15 @@
-const express = require('express');
-const multer = require('multer');
-const { spawn } = require('child_process');
-const { Innertube, UniversalCache, Platform } = require('youtubei.js');
-const { Jinter } = require('jintr');
-const { Readable } = require('stream');
-const path = require('path');
-const fs = require('fs');
-const crypto = require('crypto');
+import express from 'express';
+import multer from 'multer';
+import { spawn } from 'child_process';
+import { Innertube, UniversalCache } from 'youtubei.js';
+import { Readable } from 'stream';
+import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -137,13 +140,6 @@ app.post('/api/youtube/add/:id', async (req, res) => {
   res.status(202).send('Download started. The video will be added to the playlist shortly.');
 
   try {
-    // Provide JS evaluator for deciphering
-    Platform.shim.eval = (code, env) => {
-      const runtime = new Jinter(code);
-      runtime.scope = env;
-      return runtime.evaluate();
-    };
-
     const yt = await Innertube.create({
       cache: new UniversalCache(false),
       generate_session_store: true,
