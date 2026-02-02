@@ -283,6 +283,11 @@ class KeyManager {
     keyObj.hourlyDownloads++;
     keyObj.minuteDownloads++;
   }
+
+  markRateLimited(keyObj) {
+    keyObj.hourlyDownloads = 50; // Force out of hourly rotation
+    keyObj.minuteDownloads = 3;   // Force out of minute rotation
+  }
 }
 
 const keyManager = new KeyManager(RAPIDAPI_KEYS);
@@ -301,6 +306,7 @@ async function fetchVideoInfo(url, apiKey) {
     },
     body: JSON.stringify({ url })
   });
+  if (response.status === 429) throw new Error('TOO_MANY_REQUESTS');
   if (!response.ok) throw new Error(`RapidAPI video_info failed: ${response.statusText}`);
   return await response.json();
 }
@@ -319,6 +325,7 @@ async function startDownloadJob(url, apiKey, format = 'mp4', quality = 720) {
     },
     body: JSON.stringify({ url, format, quality })
   });
+  if (response.status === 429) throw new Error('TOO_MANY_REQUESTS');
   if (!response.ok) throw new Error(`RapidAPI download initiation failed: ${response.statusText}`);
   return await response.json();
 }
@@ -336,6 +343,7 @@ async function pollJobStatus(jobId, apiKey) {
         'User-Agent': RAPIDAPI_USER_AGENT
       }
     });
+    if (response.status === 429) throw new Error('TOO_MANY_REQUESTS');
     if (!response.ok) throw new Error(`RapidAPI status check failed: ${response.statusText}`);
     const data = await response.json();
 
@@ -362,6 +370,7 @@ async function downloadFinalFile(jobId, filename, outputPath, apiKey) {
       'User-Agent': RAPIDAPI_USER_AGENT
     }
   });
+  if (response.status === 429) throw new Error('TOO_MANY_REQUESTS');
   if (!response.ok) throw new Error(`RapidAPI file fetch failed: ${response.statusText}`);
 
   const fileStream = fs.createWriteStream(outputPath);
@@ -375,20 +384,40 @@ async function downloadFinalFile(jobId, filename, outputPath, apiKey) {
 }
 
 /**
- * Orchestrates the video download process using RapidAPI with fallback.
+ * Orchestrates the video download process using RapidAPI with fallback and key rotation.
  */
 const downloadVideo = async (destId, yt, videoId, destDir, format = 'mp4', quality = 720) => {
-  const keyObj = await keyManager.getAvailableKey(destId);
-  try {
-    await downloadVideoInternal(yt, videoId, destDir, format, quality, keyObj);
-  } catch (err) {
-    if (quality !== 360 && (err.message.includes('empty') || err.message.includes('failed'))) {
-      console.warn(`[RapidAPI] Download failed for ${quality}p, falling back to 360p for ${videoId}`);
-      await downloadVideoInternal(yt, videoId, destDir, format, 360, keyObj);
-    } else {
-      throw err;
+  let attempts = 0;
+  const maxAttempts = RAPIDAPI_KEYS.length;
+
+  while (attempts < maxAttempts) {
+    const keyObj = await keyManager.getAvailableKey(destId);
+    try {
+      // Internal retry for quality fallback within the same key if it's not a rate limit error
+      try {
+        await downloadVideoInternal(yt, videoId, destDir, format, quality, keyObj);
+        return; // Success!
+      } catch (err) {
+        if (err.message === 'TOO_MANY_REQUESTS') throw err; // Bubble up to switch key
+
+        if (quality !== 360 && (err.message.includes('empty') || err.message.includes('failed'))) {
+          addLog(destId, `[RapidAPI] ${quality}p failed, trying 360p with same key...`);
+          await downloadVideoInternal(yt, videoId, destDir, format, 360, keyObj);
+          return; // Success!
+        }
+        throw err;
+      }
+    } catch (err) {
+      if (err.message === 'TOO_MANY_REQUESTS') {
+        addLog(destId, `[RateLimit] Key ${keyObj.value.substring(0, 8)}... reported 429. Switching key.`);
+        keyManager.markRateLimited(keyObj);
+        attempts++;
+        continue;
+      }
+      throw err; // Non-rate-limit error, bubble up to stop loop
     }
   }
+  throw new Error('All API keys exhausted or rate limited.');
 };
 
 /**
