@@ -57,36 +57,56 @@
       const card = document.createElement('div');
       card.className = 'card';
       card.id = `dest-${dest.id}`;
+      const state = dest.state || {};
+      const rateLimits = state.rateLimits || { remaining: '?', resetIn: '?' };
+      const logs = state.logs || [];
+
       card.innerHTML = `
         <div class="card-header">
-          <h2>${dest.name}</h2>
+          <div>
+            <h2 style="display:inline;">${dest.name}</h2>
+            <small style="color:var(--gray); margin-left:10px;">${dest.isActive ? '(Running)' : '(Stopped)'}</small>
+          </div>
           <div style="display: flex; align-items: center; gap: 10px;">
-            <div class="status-light ${dest.isStreaming ? 'active' : ''}"></div>
+            <div class="status-light ${dest.isActive ? 'active' : ''}"></div>
             <button class="danger" onclick="deleteDestination('${dest.id}')">Delete</button>
           </div>
         </div>
         <div class="card-body">
-          <strong>Playlist</strong>
-          <ul id="playlist-${dest.id}">${dest.playlist.length > 0 ? dest.playlist.map(f => `<li class="playlist-item">${f}</li>`).join('') : '<li>Empty</li>'}</ul>
+          <div style="margin-bottom: 1rem; padding: 10px; background: #e9ecef; border-radius: 4px;">
+            <strong>📺 Now Playing:</strong>
+            <div id="playing-${dest.id}" style="font-size: 0.9rem; color: #28a745; font-weight: bold;">
+              ${state.nowPlaying ? state.nowPlaying.title : 'Nothing'}
+            </div>
+          </div>
+
+          <div style="margin-bottom: 1rem; padding: 10px; background: #fff3cd; border-radius: 4px;">
+            <strong>📥 Downloading:</strong>
+            <div id="downloading-${dest.id}" style="font-size: 0.9rem; color: #856404;">
+              ${state.nowDownloading ? `${state.nowDownloading.id} (${state.nowDownloading.progress})` : 'Idle'}
+            </div>
+          </div>
+
+          <div style="margin-bottom: 1rem; font-size: 0.85rem; color: var(--gray);">
+            <strong>💳 API Rate Limits:</strong> ${rateLimits.remaining} remaining (Reset in ${rateLimits.resetIn})
+          </div>
+
+          <strong>📜 Logs</strong>
+          <div style="background: #212529; color: #00ff00; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 0.75rem; height: 100px; overflow-y: auto; margin-top: 5px;">
+            ${logs.slice().reverse().map(l => `<div>${l}</div>`).join('')}
+          </div>
         </div>
         <div class="card-footer">
-          <form class="upload-form" data-id="${dest.id}">
-            <strong>Upload File</strong>
-            <input type="file" name="video" accept="video/mp4,video/webm,video/quicktime" required>
-            <button type="submit" ${dest.isStreaming ? 'disabled' : ''}>Upload Video</button>
-          </form>
-          <hr style="margin: 1.5rem 0; border-color: #e9ecef;">
-          <form class="youtube-form" data-id="${dest.id}">
-            <strong>Add from YouTube</strong>
-            <input type="text" name="url" placeholder="https://www.youtube.com/watch?v=..." required>
-            <button type="submit" ${dest.isStreaming ? 'disabled' : ''}>Add From URL</button>
-          </form>
-          <div style="margin-top: 1rem; display: flex; justify-content: space-between;">
+          <div style="margin-bottom: 1rem;">
+            <strong>Playlist URL:</strong>
+            <div style="font-size: 0.8rem; word-break: break-all; color: var(--gray);">${dest.playlistUrl || 'Not set'}</div>
+          </div>
+          <div style="display: flex; justify-content: space-between;">
             <div>
-              <button onclick="startStream('${dest.id}')" ${dest.isStreaming ? 'disabled' : ''}>▶️ Start</button>
-              <button class="danger" onclick="stopStream('${dest.id}')" ${!dest.isStreaming ? 'disabled' : ''}>⏹️ Stop</button>
+              <button onclick="startStream('${dest.id}')" ${dest.isActive ? 'disabled' : ''}>🚀 Download & Start</button>
+              <button class="danger" onclick="stopStream('${dest.id}')" ${!dest.isActive ? 'disabled' : ''}>⏹️ Stop</button>
             </div>
-            <button class="danger" onclick="clearPlaylist('${dest.id}')" ${dest.isStreaming ? 'disabled' : ''}>Clear Playlist</button>
+            <button class="danger" onclick="clearPlaylist('${dest.id}')">Clear Cache</button>
           </div>
         </div>
       `;
@@ -98,55 +118,9 @@
         const destinations = await api.get('/api/destinations');
         grid.innerHTML = ''; // Clear grid
         destinations.forEach(dest => grid.appendChild(createChannelCard(dest)));
-        attachUploadHandlers();
-        attachYoutubeHandlers();
       } catch (err) {
-        showToast('Error fetching data.', true);
+        // Silent error to avoid spamming toast on poll
       }
-    }
-
-    function attachUploadHandlers() {
-      document.querySelectorAll('.upload-form').forEach(form => {
-        form.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const id = form.dataset.id;
-          const formData = new FormData(form);
-          const btn = form.querySelector('button');
-          btn.textContent = 'Uploading...';
-          btn.disabled = true;
-          const response = await fetch(`/api/upload/${id}`, { method: 'POST', body: formData });
-          showToast(await response.text(), !response.ok);
-          btn.textContent = 'Upload Video';
-          btn.disabled = false;
-          if (response.ok) {
-            form.reset();
-            refreshDestinations();
-          }
-        });
-      });
-    }
-
-    function attachYoutubeHandlers() {
-      document.querySelectorAll('.youtube-form').forEach(form => {
-        form.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const id = form.dataset.id;
-          const url = form.querySelector('input[name="url"]').value;
-          const btn = form.querySelector('button');
-          btn.textContent = 'Downloading...';
-          btn.disabled = true;
-
-          const response = await api.post(`/api/youtube/add/${id}`, { url });
-          showToast(await response.text(), !response.ok);
-          
-          btn.textContent = 'Add From URL';
-          btn.disabled = false;
-          if (response.ok) {
-            form.reset();
-            // No need to refresh here, the periodic refresh will catch it
-          }
-        });
-      });
     }
 
     addDestBtn.addEventListener('click', async () => {
@@ -154,8 +128,10 @@
       if (!name) return;
       const key = prompt(`Enter the stream key for "${name}":`);
       if (!key) return;
+      const playlistUrl = prompt(`Enter the YouTube Playlist URL for "${name}":`);
+      if (!playlistUrl) return;
 
-      const response = await api.post('/api/destinations', { name, key });
+      const response = await api.post('/api/destinations', { name, key, playlistUrl });
       showToast(await response.text(), !response.ok);
       if (response.ok) refreshDestinations();
     });

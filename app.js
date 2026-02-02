@@ -1,5 +1,4 @@
 import express from 'express';
-import multer from 'multer';
 import { spawn } from 'child_process';
 import { Innertube, UniversalCache, Platform } from 'youtubei.js';
 import { Jinter } from 'jintr';
@@ -13,8 +12,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // RapidAPI Configuration
-const RAPIDAPI_KEY = '90e2561aefmshb1e09ecc9fe7ff0p1c02c6jsnc7805861cede';
-const RAPIDAPI_HOST = 'yt-video-audio-downloader-api.p.rapidapi.com';
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '90e2561aefmshb1e09ecc9fe7ff0p1c02c6jsnc7805861cede';
+const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST || 'yt-video-audio-downloader-api.p.rapidapi.com';
 const RAPIDAPI_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 // Provide JS evaluator for deciphering (Fix for youtubei.js + jintr)
@@ -41,7 +40,17 @@ if (!fs.existsSync(PLAYLISTS_DIR)) fs.mkdirSync(PLAYLISTS_DIR);
 if (!fs.existsSync(DESTINATIONS_FILE)) fs.writeFileSync(DESTINATIONS_FILE, '[]');
 
 let destinations = JSON.parse(fs.readFileSync(DESTINATIONS_FILE, 'utf-8'));
+const channelStates = new Map(); // In-memory state: K: destId, V: { nowPlaying, nowDownloading, logs, rateLimits }
 const activeStreams = new Map(); // K: destinationId, V: ffmpegProcess
+
+// Initialize destinations with missing properties
+destinations = destinations.map(dest => ({
+  playlistUrl: '',
+  videoIds: [],
+  currentIndex: 0,
+  isActive: false,
+  ...dest
+}));
 
 // Self-healing: Ensure playlist directories exist for all known destinations on startup
 destinations.forEach(dest => {
@@ -50,6 +59,14 @@ destinations.forEach(dest => {
     console.log(`[Startup] Playlist directory for '${dest.name}' not found. Creating: ${destDir}`);
     fs.mkdirSync(destDir, { recursive: true });
   }
+
+  // Initialize in-memory state
+  channelStates.set(dest.id, {
+    nowPlaying: null,
+    nowDownloading: null,
+    logs: [`[System] Initialized channel: ${dest.name}`],
+    rateLimits: { remaining: 50, resetIn: 'N/A' }
+  });
 });
 
 // --- HELPER FUNCTIONS ---
@@ -57,47 +74,65 @@ const saveDestinations = () => {
   fs.writeFileSync(DESTINATIONS_FILE, JSON.stringify(destinations, null, 2));
 };
 
+const addLog = (destId, message) => {
+  const state = channelStates.get(destId);
+  if (state) {
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = `[${timestamp}] ${message}`;
+    state.logs.push(logEntry);
+    if (state.logs.length > 50) state.logs.shift();
+    console.log(`[Channel:${destId}] ${message}`);
+  }
+};
+
 // --- MIDDLEWARE ---
 app.use(express.json());
 app.use(express.static('public'));
 
-// --- MULTER STORAGE for per-destination uploads ---
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const destDir = path.join(PLAYLISTS_DIR, req.params.id);
-    if (!fs.existsSync(destDir)) {
-      return cb(new Error('Destination playlist does not exist.'), false);
-    }
-    cb(null, destDir);
-  },
-  filename: (req, file, cb) => {
-    cb(null, Buffer.from(file.originalname, 'latin1').toString('utf8')); // Handle special characters
-  }
-});
-const upload = multer({ storage: storage });
+// Multer removed as per user request (no file uploads)
 
 // --- API: DESTINATION & PLAYLIST MANAGEMENT ---
 
 app.get('/api/destinations', (req, res) => {
   const fullDestinations = destinations.map(dest => {
-    const destDir = path.join(PLAYLISTS_DIR, dest.id);
-    const videos = fs.existsSync(destDir) ? fs.readdirSync(destDir).filter(f => !f.startsWith('.')) : [];
-    return { ...dest, playlist: videos, isStreaming: activeStreams.has(dest.id) };
+    const state = channelStates.get(dest.id) || {};
+    return {
+      ...dest,
+      isStreaming: activeStreams.has(dest.id),
+      state: state
+    };
   });
   res.json(fullDestinations);
 });
 
 app.post('/api/destinations', (req, res) => {
-  const { name, key } = req.body;
+  const { name, key, playlistUrl } = req.body;
   if (!name || !key) return res.status(400).send('Name and Key are required.');
   
-  const newDestination = { id: crypto.randomUUID(), name, key };
+  const id = crypto.randomUUID();
+  const newDestination = {
+    id,
+    name,
+    key,
+    playlistUrl: playlistUrl || '',
+    videoIds: [],
+    currentIndex: 0,
+    isActive: false
+  };
   destinations.push(newDestination);
   
   // Create a dedicated directory for this destination's playlist
-  fs.mkdirSync(path.join(PLAYLISTS_DIR, newDestination.id));
+  fs.mkdirSync(path.join(PLAYLISTS_DIR, id));
   
-saveDestinations();
+  // Initialize in-memory state
+  channelStates.set(id, {
+    nowPlaying: null,
+    nowDownloading: null,
+    logs: [`[System] Created channel: ${name}`],
+    rateLimits: { remaining: 50, resetIn: 'N/A' }
+  });
+
+  saveDestinations();
   res.status(201).json(newDestination);
 });
 
@@ -119,20 +154,35 @@ saveDestinations();
 
 // --- API: Per-Destination Playlist Actions ---
 
-app.post('/api/upload/:id', upload.single('video'), (req, res) => {
-  if (!req.file) return res.status(400).send('No file uploaded.');
-  res.json({ success: true, message: `Video '${req.file.originalname}' uploaded.` });
+app.delete('/api/destinations/:id', (req, res) => {
+  const { id } = req.params;
+  const dest = destinations.find(d => d.id === id);
+  if (dest && dest.isActive) return res.status(400).send('Cannot delete with an active stream.');
+
+  destinations = destinations.filter(d => d.id !== id);
+  channelStates.delete(id);
+
+  const destDir = path.join(PLAYLISTS_DIR, id);
+  if (fs.existsSync(destDir)) {
+    fs.rmSync(destDir, { recursive: true, force: true });
+  }
+
+  saveDestinations();
+  res.status(200).send('Destination and its playlist deleted.');
 });
 
 app.post('/api/playlist/clear/:id', (req, res) => {
   const { id } = req.params;
-  if (activeStreams.has(id)) return res.status(400).send('Cannot clear playlist while stream is active.');
+  const dest = destinations.find(d => d.id === id);
+  if (dest && dest.isActive) return res.status(400).send('Cannot clear cache while stream is active.');
   
   const destDir = path.join(PLAYLISTS_DIR, id);
-  if (!fs.existsSync(destDir)) return res.status(404).send('Playlist not found.');
+  if (!fs.existsSync(destDir)) return res.status(404).send('Cache folder not found.');
 
-  fs.readdirSync(destDir).forEach(file => fs.unlinkSync(path.join(destDir, file)));
-  res.status(200).send('Playlist cleared successfully.');
+  fs.readdirSync(destDir).forEach(file => {
+    try { fs.unlinkSync(path.join(destDir, file)); } catch (e) {}
+  });
+  res.status(200).send('Cache cleared successfully.');
 });
 
 // --- API: STREAM CONTROL ---
@@ -147,7 +197,61 @@ const extractPlaylistId = (url) => {
   return match ? match[1] : null;
 };
 
-// --- RAPIDAPI HELPERS ---
+// --- RAPIDAPI HELPERS & RATE LIMITER ---
+
+class RateLimitManager {
+  constructor() {
+    this.hourlyDownloads = 0;
+    this.minuteDownloads = 0;
+    this.lastResetHour = Date.now();
+    this.lastResetMinute = Date.now();
+  }
+
+  async checkLimit(destId) {
+    const now = Date.now();
+
+    // Reset minute counter
+    if (now - this.lastResetMinute > 60000) {
+      this.minuteDownloads = 0;
+      this.lastResetMinute = now;
+    }
+
+    // Reset hourly counter
+    if (now - this.lastResetHour > 3600000) {
+      this.hourlyDownloads = 0;
+      this.lastResetHour = now;
+    }
+
+    const state = channelStates.get(destId);
+    if (state) {
+      state.rateLimits.remaining = Math.max(0, 50 - this.hourlyDownloads);
+      const nextReset = 3600000 - (now - this.lastResetHour);
+      state.rateLimits.resetIn = `${Math.ceil(nextReset / 60000)}m`;
+    }
+
+    if (this.minuteDownloads >= 3) {
+      addLog(destId, `[RateLimit] Minute limit reached (3/min). Waiting 30s...`);
+      await new Promise(r => setTimeout(r, 30000));
+      return this.checkLimit(destId);
+    }
+
+    if (this.hourlyDownloads >= 50) {
+      addLog(destId, `[RateLimit] Hourly limit reached (50/hour). Waiting until reset...`);
+      const waitTime = 3600000 - (now - this.lastResetHour) + 10000;
+      await new Promise(r => setTimeout(r, waitTime));
+      return this.checkLimit(destId);
+    }
+
+    return true;
+  }
+
+  recordDownload() {
+    this.hourlyDownloads++;
+    this.minuteDownloads++;
+  }
+}
+
+const rateLimiter = new RateLimitManager();
 
 /**
  * Fetches video metadata using RapidAPI.
@@ -269,7 +373,9 @@ const downloadVideoInternal = async (yt, videoId, destDir, format, quality) => {
 
     if (job.directDownload && job.downloadUrl) {
       console.log(`[RapidAPI] Direct download available for ${title}`);
-      const response = await fetch(job.downloadUrl);
+      const response = await fetch(job.downloadUrl, {
+        headers: { 'User-Agent': RAPIDAPI_USER_AGENT }
+      });
       if (!response.ok) throw new Error(`Direct download failed: ${response.statusText}`);
       const fileStream = fs.createWriteStream(outputPath);
       const reader = Readable.fromWeb(response.body);
@@ -287,7 +393,9 @@ const downloadVideoInternal = async (yt, videoId, destDir, format, quality) => {
       let downloadUrl = completedJob.downloadUrl;
       if (downloadUrl && (downloadUrl.startsWith('http://') || downloadUrl.startsWith('https://'))) {
           console.log(`[RapidAPI] Downloading from full URL: ${downloadUrl}`);
-          const response = await fetch(downloadUrl);
+          const response = await fetch(downloadUrl, {
+            headers: { 'User-Agent': RAPIDAPI_USER_AGENT }
+          });
           if (!response.ok) throw new Error(`File fetch from full URL failed: ${response.statusText}`);
           const fileStream = fs.createWriteStream(outputPath);
           const reader = Readable.fromWeb(response.body);
@@ -309,103 +417,155 @@ const downloadVideoInternal = async (yt, videoId, destDir, format, quality) => {
   }
 };
 
-app.post('/api/youtube/add/:id', async (req, res) => {
-  const { id } = req.params;
-  const { url } = req.body;
-  console.log(`[API] Action: Add from YouTube | Destination ID: ${id} | URL: ${url}`);
+// Individual YouTube add endpoint removed in favor of Playlist Loop
 
-  if (!url) return res.status(400).send('YouTube URL is required.');
+const runChannelLoop = async (destId) => {
+  const dest = destinations.find(d => d.id === destId);
+  if (!dest || !dest.isActive) return;
 
-  const videoId = extractVideoId(url);
-  const playlistId = extractPlaylistId(url);
-
-  if (!videoId && !playlistId) return res.status(400).send('Invalid YouTube URL.');
-
-  const destDir = path.join(PLAYLISTS_DIR, id);
-  if (!fs.existsSync(destDir)) return res.status(404).send('Destination not found.');
-
-  res.status(202).send('Download process started.');
+  const state = channelStates.get(destId);
+  const destDir = path.join(PLAYLISTS_DIR, destId);
 
   try {
-    const yt = await Innertube.create({
-      cache: new UniversalCache(false),
-      generate_session_store: true,
-      client: 'ANDROID'
-    });
-
-    if (playlistId) {
-      console.log(`[youtubei.js] Fetching playlist: ${playlistId}`);
+    // 1. Extract Playlist if needed
+    if (!dest.videoIds || dest.videoIds.length === 0) {
+      addLog(destId, `[System] Extracting playlist IDs...`);
+      const yt = await Innertube.create({ cache: new UniversalCache(false), generate_session_store: true, client: 'ANDROID' });
+      const playlistId = extractPlaylistId(dest.playlistUrl);
+      if (!playlistId) throw new Error('Invalid playlist URL');
       const playlist = await yt.getPlaylist(playlistId);
-      console.log(`[youtubei.js] Found ${playlist.videos.length} videos in playlist.`);
-
-      for (const video of playlist.videos) {
-        if (video.id) {
-          try {
-            await downloadVideo(yt, video.id, destDir);
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limiting prevention
-          } catch (e) {
-            console.error(`[youtubei.js] Skipping video ${video.id} due to error: ${e.message}`);
-          }
-        }
-      }
-    } else {
-      await downloadVideo(yt, videoId, destDir);
+      dest.videoIds = playlist.videos.map(v => v.id).filter(id => !!id);
+      addLog(destId, `[System] Found ${dest.videoIds.length} videos.`);
+      saveDestinations();
     }
 
-  } catch (err) {
-    console.error(`[youtubei.js] Error in download process for ${url}:`, err.message);
-  }
-});
+    while (dest.isActive) {
+      const vId = dest.videoIds[dest.currentIndex];
+      const nextIdx = (dest.currentIndex + 1) % dest.videoIds.length;
+      const nextVId = dest.videoIds[nextIdx];
 
-app.post('/api/stream/start/:id', (req, res) => {
+      // 2. Download Current Video (if not already there)
+      const yt = await Innertube.create({ cache: new UniversalCache(false), generate_session_store: true, client: 'ANDROID' });
+
+      const files = fs.readdirSync(destDir).filter(f => f.includes(vId));
+      let currentFile = files.length > 0 ? path.join(destDir, files[0]) : null;
+
+      if (!currentFile) {
+        addLog(destId, `[System] Downloading video ${dest.currentIndex + 1}/${dest.videoIds.length}: ${vId}`);
+        state.nowDownloading = { id: vId, progress: '0%' };
+        await rateLimiter.checkLimit(destId);
+        await downloadVideo(yt, vId, destDir);
+        rateLimiter.recordDownload();
+        state.nowDownloading = null;
+        currentFile = path.join(destDir, fs.readdirSync(destDir).find(f => f.includes(vId)));
+      }
+
+      // 3. Start Streaming
+      addLog(destId, `[Stream] Starting: ${path.basename(currentFile)}`);
+      state.nowPlaying = { title: path.basename(currentFile), id: vId };
+
+      const ffmpegArgs = [
+        '-re', '-i', currentFile,
+        '-c', 'copy', '-f', 'flv', `rtmp://a.rtmp.youtube.com/live2/${dest.key}`
+      ];
+
+      const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+      activeStreams.set(destId, ffmpegProcess);
+
+      // 4. While streaming, download next video (buffer)
+      const downloadNext = async () => {
+        const nextFiles = fs.readdirSync(destDir).filter(f => f.includes(nextVId));
+        if (nextFiles.length === 0) {
+          addLog(destId, `[System] Buffering next video: ${nextVId}`);
+          state.nowDownloading = { id: nextVId, progress: 'Buffered' };
+          try {
+            await rateLimiter.checkLimit(destId);
+            await downloadVideo(yt, nextVId, destDir);
+            rateLimiter.recordDownload();
+            addLog(destId, `[System] Next video buffered.`);
+          } catch (e) {
+            addLog(destId, `[Error] Failed to buffer next video: ${e.message}`);
+          }
+          state.nowDownloading = null;
+        }
+      };
+
+      downloadNext(); // Run in background
+
+      // 5. Wait for current video to finish
+      await new Promise((resolve) => {
+        ffmpegProcess.on('close', (code) => {
+          addLog(destId, `[Stream] Finished (code ${code})`);
+          activeStreams.delete(destId);
+          resolve();
+        });
+        ffmpegProcess.stderr.on('data', (data) => {
+          // Can parse ffmpeg progress here if needed
+        });
+      });
+
+      // 6. Delete old file to save space
+      if (currentFile && fs.existsSync(currentFile)) {
+        addLog(destId, `[System] Deleting finished video: ${path.basename(currentFile)}`);
+        fs.unlinkSync(currentFile);
+      }
+
+      // 7. Advance to next
+      dest.currentIndex = nextIdx;
+      saveDestinations();
+
+      if (!dest.isActive) break;
+      addLog(destId, `[Loop] Moving to next video...`);
+    }
+  } catch (err) {
+    addLog(destId, `[Critical Error] Loop stopped: ${err.message}`);
+    dest.isActive = false;
+    saveDestinations();
+  }
+};
+
+app.post('/api/stream/start/:id', async (req, res) => {
   const { id } = req.params;
   const dest = destinations.find(d => d.id === id);
 
   if (!dest) return res.status(404).send('Destination not found.');
-  if (activeStreams.has(id)) return res.status(400).send('Stream is already running.');
+  if (dest.isActive) return res.status(400).send('Stream is already active.');
 
-  const destDir = path.join(PLAYLISTS_DIR, id);
-  const videoFiles = fs.readdirSync(destDir).filter(f => !f.startsWith('.'));
-  if (videoFiles.length === 0) return res.status(400).send('Playlist is empty.');
+  dest.isActive = true;
+  saveDestinations();
+  runChannelLoop(id); // Start the loop in background
 
-  const playlistFile = path.join(destDir, 'playlist.txt');
-  const playlistContent = videoFiles.map(file => `file '${path.join(destDir, file)}'`).join('\n');
-  fs.writeFileSync(playlistFile, playlistContent);
-
-  const ffmpegArgs = [
-    '-re', '-f', 'concat', '-safe', '0', '-stream_loop', '-1',
-    '-i', playlistFile,
-    '-c', 'copy', '-f', 'flv', `rtmp://a.rtmp.youtube.com/live2/${dest.key}`
-  ];
-
-  const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
-  activeStreams.set(id, ffmpegProcess);
-
-  ffmpegProcess.stderr.on('data', (data) => console.error(`[${dest.name}] ffmpeg: ${data}`));
-  ffmpegProcess.on('close', (code) => {
-    console.log(`[${dest.name}] stream stopped (code ${code})`);
-    activeStreams.delete(id);
-    if (fs.existsSync(playlistFile)) fs.unlinkSync(playlistFile); // Clean up playlist file
-  });
-
-  res.status(200).send(`Stream started for '${dest.name}'.`);
+  res.status(200).send(`Stream loop started for '${dest.name}'.`);
 });
 
 app.post('/api/stream/stop/:id', (req, res) => {
   const { id } = req.params;
   console.log(`[API] Action: Stop Stream | Destination ID: ${id}`);
-  const process = activeStreams.get(id);
 
+  const dest = destinations.find(d => d.id === id);
+  if (dest) {
+    dest.isActive = false;
+    saveDestinations();
+  }
+
+  const process = activeStreams.get(id);
   if (process) {
     process.kill('SIGKILL');
     activeStreams.delete(id);
-    res.status(200).send(`Stream stopped.`);
-  } else {
-    res.status(400).send('Stream not running.');
   }
+
+  res.status(200).send(`Stream stopping for '${dest?.name || id}'.`);
 });
 
 // --- SERVER START ---
 app.listen(PORT, () => {
   console.log(`Per-stream playlist Restreamer running on http://localhost:${PORT}`);
+
+  // Resume active streams
+  destinations.forEach(dest => {
+    if (dest.isActive) {
+      addLog(dest.id, `[System] Resuming active stream...`);
+      runChannelLoop(dest.id);
+    }
+  });
 });
