@@ -1,6 +1,9 @@
 const express = require('express');
 const multer = require('multer');
 const { spawn } = require('child_process');
+const { Innertube, UniversalCache, Platform } = require('youtubei.js');
+const { Jinter } = require('jintr');
+const { Readable } = require('stream');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -113,46 +116,67 @@ app.post('/api/playlist/clear/:id', (req, res) => {
 
 // --- API: STREAM CONTROL ---
 
-app.post('/api/youtube/add/:id', (req, res) => {
+const extractVideoId = (url) => {
+  const match = url.match(/(?:v=|\/|be\/|shorts\/)([0-9A-Za-z_-]{11})/);
+  return match ? match[1] : null;
+};
+
+app.post('/api/youtube/add/:id', async (req, res) => {
   const { id } = req.params;
   const { url } = req.body;
   console.log(`[API] Action: Add from YouTube | Destination ID: ${id} | URL: ${url}`);
 
   if (!url) return res.status(400).send('YouTube URL is required.');
 
+  const videoId = extractVideoId(url);
+  if (!videoId) return res.status(400).send('Invalid YouTube URL.');
+
   const destDir = path.join(PLAYLISTS_DIR, id);
   if (!fs.existsSync(destDir)) return res.status(404).send('Destination not found.');
 
-  const ytdlpArgs = [
-    '--js-runtimes', 'node',
-    '--extractor-args', 'youtube:player_client=android_vr,web_safari',
-    '--no-cookies',
-    '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', // Get a compatible format
-    '-o', path.join(destDir, '%(title)s.%(ext)s'), // Output to the correct playlist folder
-  ];
-
-  ytdlpArgs.push(url);
-
-  console.log(`[yt-dlp] Starting download with args: ${ytdlpArgs.join(' ')}`);
-  const ytdlpProcess = spawn('yt-dlp', ytdlpArgs);
-
-  ytdlpProcess.stdout.on('data', (data) => {
-    console.log(`[yt-dlp] stdout: ${data}`);
-  });
-
-  ytdlpProcess.stderr.on('data', (data) => {
-    console.error(`[yt-dlp] stderr: ${data}`);
-  });
-
-  ytdlpProcess.on('close', (code) => {
-    if (code === 0) {
-      console.log(`[yt-dlp] Download finished successfully for URL: ${url}`);
-    } else {
-      console.error(`[yt-dlp] Process exited with code ${code} for URL: ${url}`);
-    }
-  });
-
   res.status(202).send('Download started. The video will be added to the playlist shortly.');
+
+  try {
+    // Provide JS evaluator for deciphering
+    Platform.shim.eval = (code, env) => {
+      const runtime = new Jinter(code);
+      runtime.scope = env;
+      return runtime.evaluate();
+    };
+
+    const yt = await Innertube.create({
+      cache: new UniversalCache(false),
+      generate_session_store: true,
+      client: 'TV'
+    });
+
+    console.log(`[youtubei.js] Fetching info for: ${videoId}`);
+    const info = await yt.getInfo(videoId);
+    const title = info.basic_info.title.replace(/[\\/:*?"<>|]/g, '_');
+    const filename = `${title}.mp4`;
+    const outputPath = path.join(destDir, filename);
+
+    console.log(`[youtubei.js] Starting download: ${filename}`);
+    const stream = await info.download({
+      type: 'video+audio',
+      quality: 'best',
+      format: 'mp4'
+    });
+
+    const fileStream = fs.createWriteStream(outputPath);
+    Readable.fromWeb(stream).pipe(fileStream);
+
+    fileStream.on('finish', () => {
+      console.log(`[youtubei.js] Download finished successfully: ${filename}`);
+    });
+
+    fileStream.on('error', (err) => {
+      console.error(`[youtubei.js] File stream error:`, err.message);
+    });
+
+  } catch (err) {
+    console.error(`[youtubei.js] Error downloading ${url}:`, err.message);
+  }
 });
 
 app.post('/api/stream/start/:id', (req, res) => {
