@@ -438,9 +438,12 @@ const downloadVideoInternal = async (yt, videoId, destDir, format, quality, keyO
 
     if (job.directDownload && job.downloadUrl) {
       console.log(`[RapidAPI] Direct download available for ${title}`);
-      const response = await fetch(job.downloadUrl, {
-        headers: { 'User-Agent': RAPIDAPI_USER_AGENT }
-      });
+      const headers = { 'User-Agent': RAPIDAPI_USER_AGENT };
+      if (job.downloadUrl.includes(RAPIDAPI_HOST) || job.downloadUrl.includes('youtubedownloadapi.com')) {
+        headers['x-rapidapi-key'] = apiKey;
+        headers['x-rapidapi-host'] = RAPIDAPI_HOST;
+      }
+      const response = await fetch(job.downloadUrl, { headers });
       if (!response.ok) throw new Error(`Direct download failed: ${response.statusText}`);
       const fileStream = fs.createWriteStream(outputPath);
       const reader = Readable.fromWeb(response.body);
