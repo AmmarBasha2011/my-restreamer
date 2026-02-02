@@ -123,17 +123,13 @@ app.post('/api/youtube/add/:id', (req, res) => {
   const destDir = path.join(PLAYLISTS_DIR, id);
   if (!fs.existsSync(destDir)) return res.status(404).send('Destination not found.');
 
-  const COOKIE_FILE = path.join(__dirname, 'www.youtube.com_cookies.txt');
-
   const ytdlpArgs = [
+    '--js-runtimes', 'node',
+    '--extractor-args', 'youtube:player_client=android_vr,web_safari',
+    '--no-cookies',
     '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', // Get a compatible format
     '-o', path.join(destDir, '%(title)s.%(ext)s'), // Output to the correct playlist folder
   ];
-
-  if (fs.existsSync(COOKIE_FILE)) {
-    console.log('[yt-dlp] Found cookies file. Adding it to arguments.');
-    ytdlpArgs.push('--cookies', COOKIE_FILE);
-  }
 
   ytdlpArgs.push(url);
 
