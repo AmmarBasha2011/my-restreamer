@@ -12,6 +12,11 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// RapidAPI Configuration
+const RAPIDAPI_KEY = '90e2561aefmshb1e09ecc9fe7ff0p1c02c6jsnc7805861cede';
+const RAPIDAPI_HOST = 'yt-video-audio-downloader-api.p.rapidapi.com';
+const RAPIDAPI_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
 // Provide JS evaluator for deciphering (Fix for youtubei.js + jintr)
 Platform.shim.eval = (data, args) => {
   if (data.player_script) {
@@ -142,42 +147,116 @@ const extractPlaylistId = (url) => {
   return match ? match[1] : null;
 };
 
-const downloadVideo = async (yt, videoId, destDir) => {
-  try {
-    console.log(`[youtubei.js] Fetching info for: ${videoId}`);
-    const info = await yt.getInfo(videoId).catch(err => {
-      if (err.message.includes('Type mismatch')) {
-        console.warn(`[youtubei.js] Warning: Parser type mismatch for ${videoId}, attempting getBasicInfo.`);
-        return yt.getBasicInfo(videoId);
+// --- RAPIDAPI HELPERS ---
+
+/**
+ * Fetches video metadata using RapidAPI.
+ */
+async function fetchVideoInfo(url) {
+  const response = await fetch(`https://${RAPIDAPI_HOST}/video_info`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-rapidapi-host': RAPIDAPI_HOST,
+      'x-rapidapi-key': RAPIDAPI_KEY,
+      'User-Agent': RAPIDAPI_USER_AGENT
+    },
+    body: JSON.stringify({ url })
+  });
+  if (!response.ok) throw new Error(`RapidAPI video_info failed: ${response.statusText}`);
+  return await response.json();
+}
+
+/**
+ * Initiates a download job on RapidAPI.
+ */
+async function startDownloadJob(url, format = 'mp4', quality = 720) {
+  const response = await fetch(`https://${RAPIDAPI_HOST}/download`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-rapidapi-host': RAPIDAPI_HOST,
+      'x-rapidapi-key': RAPIDAPI_KEY,
+      'User-Agent': RAPIDAPI_USER_AGENT
+    },
+    body: JSON.stringify({ url, format, quality })
+  });
+  if (!response.ok) throw new Error(`RapidAPI download initiation failed: ${response.statusText}`);
+  return await response.json();
+}
+
+/**
+ * Polls the download job status until it is completed or fails.
+ */
+async function pollJobStatus(jobId) {
+  const maxRetries = 60; // 5 minutes with 5s interval
+  for (let i = 0; i < maxRetries; i++) {
+    const response = await fetch(`https://${RAPIDAPI_HOST}/status/${jobId}`, {
+      headers: {
+        'x-rapidapi-host': RAPIDAPI_HOST,
+        'x-rapidapi-key': RAPIDAPI_KEY,
+        'User-Agent': RAPIDAPI_USER_AGENT
       }
-      throw err;
     });
-    const title = (info.basic_info?.title || videoId).replace(/[\\/:*?"<>|]/g, '_');
-    const filename = `${title}.mp4`;
+    if (!response.ok) throw new Error(`RapidAPI status check failed: ${response.statusText}`);
+    const data = await response.json();
+
+    if (data.status === 'completed') return data;
+    if (data.status === 'error') throw new Error(`RapidAPI job error: ${data.message || 'Unknown error'}`);
+
+    console.log(`[RapidAPI] Job ${jobId} status: ${data.status} (${data.progress || '0%'})`);
+    await new Promise(resolve => setTimeout(resolve, 5000));
+  }
+  throw new Error('RapidAPI job timed out.');
+}
+
+/**
+ * Downloads the processed file from RapidAPI and saves it locally.
+ */
+async function downloadFinalFile(jobId, filename, outputPath) {
+  const response = await fetch(`https://${RAPIDAPI_HOST}/file/${jobId}/${filename}`, {
+    headers: {
+      'x-rapidapi-host': RAPIDAPI_HOST,
+      'x-rapidapi-key': RAPIDAPI_KEY,
+      'User-Agent': RAPIDAPI_USER_AGENT
+    }
+  });
+  if (!response.ok) throw new Error(`RapidAPI file fetch failed: ${response.statusText}`);
+
+  const fileStream = fs.createWriteStream(outputPath);
+  const reader = Readable.fromWeb(response.body);
+  reader.pipe(fileStream);
+
+  return new Promise((resolve, reject) => {
+    fileStream.on('finish', resolve);
+    fileStream.on('error', reject);
+  });
+}
+
+/**
+ * Orchestrates the video download process using RapidAPI.
+ */
+const downloadVideo = async (yt, videoId, destDir, format = 'mp4', quality = 720) => {
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+  try {
+    console.log(`[RapidAPI] Fetching info for: ${videoId}`);
+    const info = await fetchVideoInfo(url);
+    const title = (info.title || videoId).replace(/[\\/:*?"<>|]/g, '_');
+    const filename = `${title}.${format}`;
     const outputPath = path.join(destDir, filename);
 
-    console.log(`[youtubei.js] Starting download: ${filename}`);
-    const stream = await info.download({
-      type: 'video+audio',
-      quality: 'best',
-      format: 'mp4'
-    });
+    console.log(`[RapidAPI] Starting download job: ${title}`);
+    const job = await startDownloadJob(url, format, quality);
+    console.log(`[RapidAPI] Job initiated: ${job.jobId}`);
 
-    const fileStream = fs.createWriteStream(outputPath);
-    Readable.fromWeb(stream).pipe(fileStream);
+    const completedJob = await pollJobStatus(job.jobId);
+    console.log(`[RapidAPI] Job completed. Ready to fetch file.`);
 
-    return new Promise((resolve, reject) => {
-      fileStream.on('finish', () => {
-        console.log(`[youtubei.js] Download finished successfully: ${filename}`);
-        resolve();
-      });
-      fileStream.on('error', (err) => {
-        console.error(`[youtubei.js] File stream error for ${videoId}:`, err.message);
-        reject(err);
-      });
-    });
+    await downloadFinalFile(job.jobId, completedJob.filename || `${videoId}.${format}`, outputPath);
+    console.log(`[RapidAPI] Download finished successfully: ${filename}`);
+
   } catch (err) {
-    console.error(`[youtubei.js] Error downloading video ${videoId}:`, err.message);
+    console.error(`[RapidAPI] Error downloading video ${videoId}:`, err.message);
     throw err;
   }
 };
