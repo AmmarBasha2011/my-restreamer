@@ -83,7 +83,11 @@
           <div style="margin-bottom: 1rem; padding: 10px; background: #fff3cd; border-radius: 4px;">
             <strong>📥 Downloading:</strong>
             <div id="downloading-${dest.id}" style="font-size: 0.9rem; color: #856404;">
-              ${state.nowDownloading ? `${state.nowDownloading.id} (${state.nowDownloading.progress})` : 'Idle'}
+              ${state.nowDownloading ? `
+                <div>ID: ${state.nowDownloading.id}</div>
+                <div>Status: ${state.nowDownloading.progress}</div>
+                ${state.nowDownloading.quality ? `<div style="font-weight:bold;">Quality: ${state.nowDownloading.quality}</div>` : ''}
+              ` : 'Idle'}
             </div>
           </div>
 

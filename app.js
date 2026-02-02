@@ -386,26 +386,36 @@ async function downloadFinalFile(jobId, filename, outputPath, apiKey) {
 /**
  * Orchestrates the video download process using RapidAPI with fallback and key rotation.
  */
-const downloadVideo = async (destId, yt, videoId, destDir, format = 'mp4', quality = 720) => {
+const downloadVideo = async (destId, yt, videoId, destDir, format = 'mp4', requestedQuality = 360) => {
   let attempts = 0;
   const maxAttempts = RAPIDAPI_KEYS.length;
+  // User wants 360p by default. Fallback to 480/720 only if 360 fails with 403 (Forbidden).
+  const qualitiesToTry = [360, 480, 720];
 
   while (attempts < maxAttempts) {
     const keyObj = await keyManager.getAvailableKey(destId);
     try {
-      // Internal retry for quality fallback within the same key if it's not a rate limit error
-      try {
-        await downloadVideoInternal(yt, videoId, destDir, format, quality, keyObj);
-        return; // Success!
-      } catch (err) {
-        if (err.message === 'TOO_MANY_REQUESTS') throw err; // Bubble up to switch key
-
-        if (quality !== 360 && (err.message.includes('empty') || err.message.includes('failed'))) {
-          addLog(destId, `[RapidAPI] ${quality}p failed, trying 360p with same key...`);
-          await downloadVideoInternal(yt, videoId, destDir, format, 360, keyObj);
+      for (const quality of qualitiesToTry) {
+        try {
+          const state = channelStates.get(destId);
+          if (state && state.nowDownloading) state.nowDownloading.quality = `${quality}p`;
+          addLog(destId, `[RapidAPI] Attempting download: ${videoId} (${quality}p)`);
+          await downloadVideoInternal(destId, videoId, destDir, format, quality, keyObj);
           return; // Success!
+        } catch (err) {
+          // If 403 Forbidden on direct link, try next quality to force job
+          if (err.message.includes('403') || err.message.includes('Forbidden')) {
+            addLog(destId, `[RapidAPI] ${quality}p Forbidden. Falling back to next quality...`);
+            continue;
+          }
+          // If rate limited, switch key
+          if (err.message === 'TOO_MANY_REQUESTS') {
+            throw err;
+          }
+          // For other errors, log and potentially try next quality or switch key
+          addLog(destId, `[RapidAPI] Error with ${quality}p: ${err.message}`);
+          if (quality === 720) throw err; // Last quality failed
         }
-        throw err;
       }
     } catch (err) {
       if (err.message === 'TOO_MANY_REQUESTS') {
@@ -414,37 +424,66 @@ const downloadVideo = async (destId, yt, videoId, destDir, format = 'mp4', quali
         attempts++;
         continue;
       }
-      throw err; // Non-rate-limit error, bubble up to stop loop
+      // For general failures, also try switching key to be safe
+      addLog(destId, `[Error] Key ${keyObj.value.substring(0, 8)}... failed. Switching key.`);
+      attempts++;
+      continue;
     }
   }
-  throw new Error('All API keys exhausted or rate limited.');
+  throw new Error('All API keys exhausted or failed to download video.');
 };
 
 /**
  * Internal orchestrator for RapidAPI download.
  */
-const downloadVideoInternal = async (yt, videoId, destDir, format, quality, keyObj) => {
+const downloadVideoInternal = async (destId, videoId, destDir, format, quality, keyObj) => {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
   const apiKey = keyObj.value;
   try {
-    console.log(`[RapidAPI] Fetching info for: ${videoId}`);
     const info = await fetchVideoInfo(url, apiKey);
     const title = (info.videoDetails?.title || info.title || videoId).replace(/[\\/:*?"<>|]/g, '_');
     const filename = `${title}.${format}`;
     const outputPath = path.join(destDir, filename);
 
-    console.log(`[RapidAPI] Starting download job: ${title}`);
     const job = await startDownloadJob(url, apiKey, format, quality);
 
     if (job.directDownload && job.downloadUrl) {
-      console.log(`[RapidAPI] Direct download available for ${title}`);
+      console.log(`[RapidAPI] Direct download available: ${job.downloadUrl}`);
+      // Try fetching direct link
+      const response = await fetch(job.downloadUrl, {
+        headers: { 'User-Agent': RAPIDAPI_USER_AGENT }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Direct download failed: ${response.status} ${response.statusText}`);
+      }
+
+      const fileStream = fs.createWriteStream(outputPath);
+      const reader = Readable.fromWeb(response.body);
+      reader.pipe(fileStream);
+      await new Promise((resolve, reject) => {
+        fileStream.on('finish', resolve);
+        fileStream.on('error', reject);
+      });
+    } else if (job.jobId) {
+      addLog(destId, `[RapidAPI] Job initiated: ${job.jobId}. Polling...`);
+      const completedJob = await pollJobStatus(job.jobId, apiKey);
+
+      let downloadUrl = completedJob.downloadUrl;
+      // Ensure downloadUrl is absolute for the file fetch
+      if (downloadUrl && !downloadUrl.startsWith('http')) {
+          downloadUrl = `https://${RAPIDAPI_HOST}${downloadUrl}`;
+      }
+
       const headers = { 'User-Agent': RAPIDAPI_USER_AGENT };
-      if (job.downloadUrl.includes(RAPIDAPI_HOST) || job.downloadUrl.includes('youtubedownloadapi.com')) {
+      if (downloadUrl.includes(RAPIDAPI_HOST)) {
         headers['x-rapidapi-key'] = apiKey;
         headers['x-rapidapi-host'] = RAPIDAPI_HOST;
       }
-      const response = await fetch(job.downloadUrl, { headers });
-      if (!response.ok) throw new Error(`Direct download failed: ${response.statusText}`);
+
+      const response = await fetch(downloadUrl, { headers });
+      if (!response.ok) throw new Error(`File fetch failed: ${response.statusText}`);
+
       const fileStream = fs.createWriteStream(outputPath);
       const reader = Readable.fromWeb(response.body);
       reader.pipe(fileStream);
@@ -453,38 +492,14 @@ const downloadVideoInternal = async (yt, videoId, destDir, format, quality, keyO
         fileStream.on('error', reject);
       });
     } else {
-      console.log(`[RapidAPI] Job initiated: ${job.jobId}`);
-      const completedJob = await pollJobStatus(job.jobId, apiKey);
-      console.log(`[RapidAPI] Job completed. Ready to fetch file.`);
-
-      // Use the provided downloadUrl if it's a full URL, otherwise use the /file endpoint
-      let downloadUrl = completedJob.downloadUrl;
-      if (downloadUrl && (downloadUrl.startsWith('http://') || downloadUrl.startsWith('https://'))) {
-          console.log(`[RapidAPI] Downloading from full URL: ${downloadUrl}`);
-          const headers = { 'User-Agent': RAPIDAPI_USER_AGENT };
-          if (downloadUrl.includes(RAPIDAPI_HOST) || downloadUrl.includes('youtubedownloadapi.com')) {
-            headers['x-rapidapi-key'] = apiKey;
-            headers['x-rapidapi-host'] = RAPIDAPI_HOST;
-          }
-          const response = await fetch(downloadUrl, { headers });
-          if (!response.ok) throw new Error(`File fetch from full URL failed: ${response.statusText}`);
-          const fileStream = fs.createWriteStream(outputPath);
-          const reader = Readable.fromWeb(response.body);
-          reader.pipe(fileStream);
-          await new Promise((resolve, reject) => {
-            fileStream.on('finish', resolve);
-            fileStream.on('error', reject);
-          });
-      } else {
-          // Fallback to our downloadFinalFile helper which uses the /v1/file endpoint
-          await downloadFinalFile(job.jobId, completedJob.filename || `${videoId}.${format}`, outputPath, apiKey);
-      }
+        throw new Error('No jobId or downloadUrl returned from API.');
     }
-    console.log(`[RapidAPI] Download finished successfully: ${filename}`);
+
+    addLog(destId, `[RapidAPI] Success: ${filename}`);
     keyManager.recordDownload(keyObj);
 
   } catch (err) {
-    console.error(`[RapidAPI] Error downloading video ${videoId}:`, err.message);
+    console.error(`[RapidAPI] Internal Error:`, err.message);
     throw err;
   }
 };
@@ -499,10 +514,12 @@ const runChannelLoop = async (destId) => {
   const destDir = path.join(PLAYLISTS_DIR, destId);
 
   try {
+    // Shared YouTube client for metadata (not for downloading)
+    const yt = await Innertube.create({ cache: new UniversalCache(false), generate_session_store: true, client: 'ANDROID' });
+
     // 1. Extract Playlist if needed
     if (!dest.videoIds || dest.videoIds.length === 0) {
       addLog(destId, `[System] Extracting playlist IDs...`);
-      const yt = await Innertube.create({ cache: new UniversalCache(false), generate_session_store: true, client: 'ANDROID' });
       const playlistId = extractPlaylistId(dest.playlistUrl);
       if (!playlistId) throw new Error('Invalid playlist URL');
       const playlist = await yt.getPlaylist(playlistId);
@@ -517,8 +534,6 @@ const runChannelLoop = async (destId) => {
       const nextVId = dest.videoIds[nextIdx];
 
       // 2. Download Current Video (if not already there)
-      const yt = await Innertube.create({ cache: new UniversalCache(false), generate_session_store: true, client: 'ANDROID' });
-
       const files = fs.readdirSync(destDir).filter(f => f.includes(vId));
       let currentFile = files.length > 0 ? path.join(destDir, files[0]) : null;
 
