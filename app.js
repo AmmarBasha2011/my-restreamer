@@ -154,6 +154,24 @@ saveDestinations();
 
 // --- API: Per-Destination Playlist Actions ---
 
+app.put('/api/destinations/:id/playlist', (req, res) => {
+  const { id } = req.params;
+  const { playlistUrl } = req.body;
+  if (!playlistUrl) return res.status(400).send('Playlist URL is required.');
+
+  const dest = destinations.find(d => d.id === id);
+  if (!dest) return res.status(404).send('Destination not found.');
+  if (dest.isActive) return res.status(400).send('Cannot update playlist while stream is active.');
+
+  dest.playlistUrl = playlistUrl;
+  dest.videoIds = []; // Reset IDs to trigger fresh extraction
+  dest.currentIndex = 0; // Start from beginning
+
+  addLog(id, `[System] Playlist URL updated to: ${playlistUrl}`);
+  saveDestinations();
+  res.status(200).send('Playlist URL updated.');
+});
+
 app.delete('/api/destinations/:id', (req, res) => {
   const { id } = req.params;
   const dest = destinations.find(d => d.id === id);
