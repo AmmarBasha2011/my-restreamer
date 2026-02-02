@@ -202,7 +202,10 @@ async function pollJobStatus(jobId) {
     const data = await response.json();
 
     if (data.status === 'completed') return data;
-    if (data.status === 'error') throw new Error(`RapidAPI job error: ${data.message || 'Unknown error'}`);
+    if (data.status === 'error') {
+      console.error('[RapidAPI] Job Error Data:', JSON.stringify(data, null, 2));
+      throw new Error(`RapidAPI job error: ${data.message || data.error || 'Unknown error'}`);
+    }
 
     console.log(`[RapidAPI] Job ${jobId} status: ${data.status} (${data.progress || '0%'})`);
     await new Promise(resolve => setTimeout(resolve, 5000));
@@ -234,25 +237,70 @@ async function downloadFinalFile(jobId, filename, outputPath) {
 }
 
 /**
- * Orchestrates the video download process using RapidAPI.
+ * Orchestrates the video download process using RapidAPI with fallback.
  */
 const downloadVideo = async (yt, videoId, destDir, format = 'mp4', quality = 720) => {
+  try {
+    await downloadVideoInternal(yt, videoId, destDir, format, quality);
+  } catch (err) {
+    if (quality !== 360 && (err.message.includes('empty') || err.message.includes('failed'))) {
+      console.warn(`[RapidAPI] Download failed for ${quality}p, falling back to 360p for ${videoId}`);
+      await downloadVideoInternal(yt, videoId, destDir, format, 360);
+    } else {
+      throw err;
+    }
+  }
+};
+
+/**
+ * Internal orchestrator for RapidAPI download.
+ */
+const downloadVideoInternal = async (yt, videoId, destDir, format, quality) => {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
   try {
     console.log(`[RapidAPI] Fetching info for: ${videoId}`);
     const info = await fetchVideoInfo(url);
-    const title = (info.title || videoId).replace(/[\\/:*?"<>|]/g, '_');
+    const title = (info.videoDetails?.title || info.title || videoId).replace(/[\\/:*?"<>|]/g, '_');
     const filename = `${title}.${format}`;
     const outputPath = path.join(destDir, filename);
 
     console.log(`[RapidAPI] Starting download job: ${title}`);
     const job = await startDownloadJob(url, format, quality);
-    console.log(`[RapidAPI] Job initiated: ${job.jobId}`);
 
-    const completedJob = await pollJobStatus(job.jobId);
-    console.log(`[RapidAPI] Job completed. Ready to fetch file.`);
+    if (job.directDownload && job.downloadUrl) {
+      console.log(`[RapidAPI] Direct download available for ${title}`);
+      const response = await fetch(job.downloadUrl);
+      if (!response.ok) throw new Error(`Direct download failed: ${response.statusText}`);
+      const fileStream = fs.createWriteStream(outputPath);
+      const reader = Readable.fromWeb(response.body);
+      reader.pipe(fileStream);
+      await new Promise((resolve, reject) => {
+        fileStream.on('finish', resolve);
+        fileStream.on('error', reject);
+      });
+    } else {
+      console.log(`[RapidAPI] Job initiated: ${job.jobId}`);
+      const completedJob = await pollJobStatus(job.jobId);
+      console.log(`[RapidAPI] Job completed. Ready to fetch file.`);
 
-    await downloadFinalFile(job.jobId, completedJob.filename || `${videoId}.${format}`, outputPath);
+      // Use the provided downloadUrl if it's a full URL, otherwise use the /file endpoint
+      let downloadUrl = completedJob.downloadUrl;
+      if (downloadUrl && (downloadUrl.startsWith('http://') || downloadUrl.startsWith('https://'))) {
+          console.log(`[RapidAPI] Downloading from full URL: ${downloadUrl}`);
+          const response = await fetch(downloadUrl);
+          if (!response.ok) throw new Error(`File fetch from full URL failed: ${response.statusText}`);
+          const fileStream = fs.createWriteStream(outputPath);
+          const reader = Readable.fromWeb(response.body);
+          reader.pipe(fileStream);
+          await new Promise((resolve, reject) => {
+            fileStream.on('finish', resolve);
+            fileStream.on('error', reject);
+          });
+      } else {
+          // Fallback to our downloadFinalFile helper which uses the /v1/file endpoint
+          await downloadFinalFile(job.jobId, completedJob.filename || `${videoId}.${format}`, outputPath);
+      }
+    }
     console.log(`[RapidAPI] Download finished successfully: ${filename}`);
 
   } catch (err) {

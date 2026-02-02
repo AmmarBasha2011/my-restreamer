@@ -26,8 +26,12 @@ async function testRapidAPI() {
       body: JSON.stringify({ url: testUrl })
     });
     const info = await infoResponse.json();
-    console.log(`Title: ${info.title}`);
-    console.log(`Available formats: ${info.formats.map(f => f.type).join(', ')}`);
+    console.log('Video Info Response:', JSON.stringify(info, null, 2));
+    const title = info.videoDetails?.title || info.title;
+    console.log(`Title: ${title}`);
+    if (info.formats) {
+        console.log(`Available formats: ${info.formats.map(f => f.format || f.type).join(', ')}`);
+    }
 
     console.log('\n--- 2. Testing download as MP4 (720p) ---');
     const mp4Job = await initiateDownload(testUrl, 'mp4', 720);
