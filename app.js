@@ -121,7 +121,7 @@ app.post('/api/playlist/clear/:id', (req, res) => {
 // --- API: STREAM CONTROL ---
 
 const extractVideoId = (url) => {
-  const match = url.match(/(?:v=|\/|be\/|shorts\/)([0-9A-Za-z_-]{11})/);
+  const match = url.match(/(?:v=|be\/|shorts\/)([0-9A-Za-z_-]{11})/);
   return match ? match[1] : null;
 };
 
@@ -133,7 +133,13 @@ const extractPlaylistId = (url) => {
 const downloadVideo = async (yt, videoId, destDir) => {
   try {
     console.log(`[youtubei.js] Fetching info for: ${videoId}`);
-    const info = await yt.getInfo(videoId);
+    const info = await yt.getInfo(videoId).catch(err => {
+      if (err.message.includes('Type mismatch')) {
+        console.warn(`[youtubei.js] Warning: Parser type mismatch for ${videoId}, attempting getBasicInfo.`);
+        return yt.getBasicInfo(videoId);
+      }
+      throw err;
+    });
     const title = (info.basic_info?.title || videoId).replace(/[\\/:*?"<>|]/g, '_');
     const filename = `${title}.mp4`;
     const outputPath = path.join(destDir, filename);
@@ -192,7 +198,7 @@ app.post('/api/youtube/add/:id', async (req, res) => {
     const yt = await Innertube.create({
       cache: new UniversalCache(false),
       generate_session_store: true,
-      client: 'TV'
+      client: 'ANDROID'
     });
 
     if (playlistId) {
@@ -204,8 +210,9 @@ app.post('/api/youtube/add/:id', async (req, res) => {
         if (video.id) {
           try {
             await downloadVideo(yt, video.id, destDir);
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limiting prevention
           } catch (e) {
-            console.error(`[youtubei.js] Skipping video ${video.id} due to error.`);
+            console.error(`[youtubei.js] Skipping video ${video.id} due to error: ${e.message}`);
           }
         }
       }
