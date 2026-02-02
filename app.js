@@ -12,7 +12,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // RapidAPI Configuration
-const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || '90e2561aefmshb1e09ecc9fe7ff0p1c02c6jsnc7805861cede';
+const RAPIDAPI_KEYS = [
+  '90e2561aefmshb1e09ecc9fe7ff0p1c02c6jsnc7805861cede',
+  '77e358f168msh88950a311fa7bdep121156jsn292a1db3d2c4',
+  '0a3d9e3082msh791e7df977ab33bp143086jsn80a71254f260',
+  'e7f8ca51bemsh02fcafaf0277020p1e3154jsn9dcf4448d4ca',
+  'af318920e4msh478e356ae0b8d0ep1f081cjsn874b37c1848e'
+];
 const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST || 'yt-video-audio-downloader-api.p.rapidapi.com';
 const RAPIDAPI_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
@@ -65,7 +71,7 @@ destinations.forEach(dest => {
     nowPlaying: null,
     nowDownloading: null,
     logs: [`[System] Initialized channel: ${dest.name}`],
-    rateLimits: { remaining: 50, resetIn: 'N/A' }
+    rateLimits: { remaining: RAPIDAPI_KEYS.length * 50, resetIn: 'N/A' }
   });
 });
 
@@ -129,7 +135,7 @@ app.post('/api/destinations', (req, res) => {
     nowPlaying: null,
     nowDownloading: null,
     logs: [`[System] Created channel: ${name}`],
-    rateLimits: { remaining: 50, resetIn: 'N/A' }
+    rateLimits: { remaining: RAPIDAPI_KEYS.length * 50, resetIn: 'N/A' }
   });
 
   saveDestinations();
@@ -215,72 +221,82 @@ const extractPlaylistId = (url) => {
   return match ? match[1] : null;
 };
 
-// --- RAPIDAPI HELPERS & RATE LIMITER ---
+// --- RAPIDAPI HELPERS & KEY ROTATION MANAGER ---
 
-class RateLimitManager {
-  constructor() {
-    this.hourlyDownloads = 0;
-    this.minuteDownloads = 0;
-    this.lastResetHour = Date.now();
-    this.lastResetMinute = Date.now();
+class KeyManager {
+  constructor(keys) {
+    this.keys = keys.map(k => ({
+      value: k,
+      hourlyDownloads: 0,
+      minuteDownloads: 0,
+      lastResetHour: Date.now(),
+      lastResetMinute: Date.now()
+    }));
   }
 
-  async checkLimit(destId) {
+  async getAvailableKey(destId) {
     const now = Date.now();
+    let minWait = Infinity;
 
-    // Reset minute counter
-    if (now - this.lastResetMinute > 60000) {
-      this.minuteDownloads = 0;
-      this.lastResetMinute = now;
+    for (const k of this.keys) {
+      // Reset minute counter
+      if (now - k.lastResetMinute > 60000) {
+        k.minuteDownloads = 0;
+        k.lastResetMinute = now;
+      }
+
+      // Reset hourly counter
+      if (now - k.lastResetHour > 3600000) {
+        k.hourlyDownloads = 0;
+        k.lastResetHour = now;
+      }
+
+      if (k.minuteDownloads < 3 && k.hourlyDownloads < 50) {
+        const state = channelStates.get(destId);
+        if (state) {
+          state.rateLimits.remaining = this.getTotalRemaining();
+          const nextReset = 3600000 - (now - k.lastResetHour);
+          state.rateLimits.resetIn = `${Math.ceil(nextReset / 60000)}m`;
+        }
+        return k;
+      }
+
+      // Track wait times
+      const minuteWait = (k.minuteDownloads >= 3) ? (60000 - (now - k.lastResetMinute)) : 0;
+      const hourlyWait = (k.hourlyDownloads >= 50) ? (3600000 - (now - k.lastResetHour)) : 0;
+      const wait = Math.max(minuteWait, hourlyWait);
+      if (wait > 0) minWait = Math.min(minWait, wait);
     }
 
-    // Reset hourly counter
-    if (now - this.lastResetHour > 3600000) {
-      this.hourlyDownloads = 0;
-      this.lastResetHour = now;
-    }
-
-    const state = channelStates.get(destId);
-    if (state) {
-      state.rateLimits.remaining = Math.max(0, 50 - this.hourlyDownloads);
-      const nextReset = 3600000 - (now - this.lastResetHour);
-      state.rateLimits.resetIn = `${Math.ceil(nextReset / 60000)}m`;
-    }
-
-    if (this.minuteDownloads >= 3) {
-      addLog(destId, `[RateLimit] Minute limit reached (3/min). Waiting 30s...`);
-      await new Promise(r => setTimeout(r, 30000));
-      return this.checkLimit(destId);
-    }
-
-    if (this.hourlyDownloads >= 50) {
-      addLog(destId, `[RateLimit] Hourly limit reached (50/hour). Waiting until reset...`);
-      const waitTime = 3600000 - (now - this.lastResetHour) + 10000;
-      await new Promise(r => setTimeout(r, waitTime));
-      return this.checkLimit(destId);
-    }
-
-    return true;
+    // No key available
+    const waitSeconds = Math.ceil((minWait === Infinity ? 5000 : minWait) / 1000);
+    addLog(destId, `[RateLimit] All keys exhausted. Waiting ${waitSeconds}s...`);
+    await new Promise(r => setTimeout(r, Math.max(minWait === Infinity ? 5000 : minWait, 5000)));
+    return this.getAvailableKey(destId);
   }
 
-  recordDownload() {
-    this.hourlyDownloads++;
-    this.minuteDownloads++;
+  getTotalRemaining() {
+    return this.keys.reduce((acc, k) => acc + (50 - k.hourlyDownloads), 0);
+  }
+
+  recordDownload(keyObj) {
+    keyObj.hourlyDownloads++;
+    keyObj.minuteDownloads++;
   }
 }
 
-const rateLimiter = new RateLimitManager();
+const keyManager = new KeyManager(RAPIDAPI_KEYS);
 
 /**
  * Fetches video metadata using RapidAPI.
  */
-async function fetchVideoInfo(url) {
+async function fetchVideoInfo(url, apiKey) {
   const response = await fetch(`https://${RAPIDAPI_HOST}/video_info`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-rapidapi-host': RAPIDAPI_HOST,
-      'x-rapidapi-key': RAPIDAPI_KEY,
+      'x-rapidapi-key': apiKey,
       'User-Agent': RAPIDAPI_USER_AGENT
     },
     body: JSON.stringify({ url })
@@ -292,13 +308,13 @@ async function fetchVideoInfo(url) {
 /**
  * Initiates a download job on RapidAPI.
  */
-async function startDownloadJob(url, format = 'mp4', quality = 720) {
+async function startDownloadJob(url, apiKey, format = 'mp4', quality = 720) {
   const response = await fetch(`https://${RAPIDAPI_HOST}/download`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-rapidapi-host': RAPIDAPI_HOST,
-      'x-rapidapi-key': RAPIDAPI_KEY,
+      'x-rapidapi-key': apiKey,
       'User-Agent': RAPIDAPI_USER_AGENT
     },
     body: JSON.stringify({ url, format, quality })
@@ -310,13 +326,13 @@ async function startDownloadJob(url, format = 'mp4', quality = 720) {
 /**
  * Polls the download job status until it is completed or fails.
  */
-async function pollJobStatus(jobId) {
+async function pollJobStatus(jobId, apiKey) {
   const maxRetries = 60; // 5 minutes with 5s interval
   for (let i = 0; i < maxRetries; i++) {
     const response = await fetch(`https://${RAPIDAPI_HOST}/status/${jobId}`, {
       headers: {
         'x-rapidapi-host': RAPIDAPI_HOST,
-        'x-rapidapi-key': RAPIDAPI_KEY,
+        'x-rapidapi-key': apiKey,
         'User-Agent': RAPIDAPI_USER_AGENT
       }
     });
@@ -338,11 +354,11 @@ async function pollJobStatus(jobId) {
 /**
  * Downloads the processed file from RapidAPI and saves it locally.
  */
-async function downloadFinalFile(jobId, filename, outputPath) {
+async function downloadFinalFile(jobId, filename, outputPath, apiKey) {
   const response = await fetch(`https://${RAPIDAPI_HOST}/file/${jobId}/${filename}`, {
     headers: {
       'x-rapidapi-host': RAPIDAPI_HOST,
-      'x-rapidapi-key': RAPIDAPI_KEY,
+      'x-rapidapi-key': apiKey,
       'User-Agent': RAPIDAPI_USER_AGENT
     }
   });
@@ -361,13 +377,14 @@ async function downloadFinalFile(jobId, filename, outputPath) {
 /**
  * Orchestrates the video download process using RapidAPI with fallback.
  */
-const downloadVideo = async (yt, videoId, destDir, format = 'mp4', quality = 720) => {
+const downloadVideo = async (destId, yt, videoId, destDir, format = 'mp4', quality = 720) => {
+  const keyObj = await keyManager.getAvailableKey(destId);
   try {
-    await downloadVideoInternal(yt, videoId, destDir, format, quality);
+    await downloadVideoInternal(yt, videoId, destDir, format, quality, keyObj);
   } catch (err) {
     if (quality !== 360 && (err.message.includes('empty') || err.message.includes('failed'))) {
       console.warn(`[RapidAPI] Download failed for ${quality}p, falling back to 360p for ${videoId}`);
-      await downloadVideoInternal(yt, videoId, destDir, format, 360);
+      await downloadVideoInternal(yt, videoId, destDir, format, 360, keyObj);
     } else {
       throw err;
     }
@@ -377,17 +394,18 @@ const downloadVideo = async (yt, videoId, destDir, format = 'mp4', quality = 720
 /**
  * Internal orchestrator for RapidAPI download.
  */
-const downloadVideoInternal = async (yt, videoId, destDir, format, quality) => {
+const downloadVideoInternal = async (yt, videoId, destDir, format, quality, keyObj) => {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
+  const apiKey = keyObj.value;
   try {
     console.log(`[RapidAPI] Fetching info for: ${videoId}`);
-    const info = await fetchVideoInfo(url);
+    const info = await fetchVideoInfo(url, apiKey);
     const title = (info.videoDetails?.title || info.title || videoId).replace(/[\\/:*?"<>|]/g, '_');
     const filename = `${title}.${format}`;
     const outputPath = path.join(destDir, filename);
 
     console.log(`[RapidAPI] Starting download job: ${title}`);
-    const job = await startDownloadJob(url, format, quality);
+    const job = await startDownloadJob(url, apiKey, format, quality);
 
     if (job.directDownload && job.downloadUrl) {
       console.log(`[RapidAPI] Direct download available for ${title}`);
@@ -404,16 +422,19 @@ const downloadVideoInternal = async (yt, videoId, destDir, format, quality) => {
       });
     } else {
       console.log(`[RapidAPI] Job initiated: ${job.jobId}`);
-      const completedJob = await pollJobStatus(job.jobId);
+      const completedJob = await pollJobStatus(job.jobId, apiKey);
       console.log(`[RapidAPI] Job completed. Ready to fetch file.`);
 
       // Use the provided downloadUrl if it's a full URL, otherwise use the /file endpoint
       let downloadUrl = completedJob.downloadUrl;
       if (downloadUrl && (downloadUrl.startsWith('http://') || downloadUrl.startsWith('https://'))) {
           console.log(`[RapidAPI] Downloading from full URL: ${downloadUrl}`);
-          const response = await fetch(downloadUrl, {
-            headers: { 'User-Agent': RAPIDAPI_USER_AGENT }
-          });
+          const headers = { 'User-Agent': RAPIDAPI_USER_AGENT };
+          if (downloadUrl.includes(RAPIDAPI_HOST) || downloadUrl.includes('youtubedownloadapi.com')) {
+            headers['x-rapidapi-key'] = apiKey;
+            headers['x-rapidapi-host'] = RAPIDAPI_HOST;
+          }
+          const response = await fetch(downloadUrl, { headers });
           if (!response.ok) throw new Error(`File fetch from full URL failed: ${response.statusText}`);
           const fileStream = fs.createWriteStream(outputPath);
           const reader = Readable.fromWeb(response.body);
@@ -424,10 +445,11 @@ const downloadVideoInternal = async (yt, videoId, destDir, format, quality) => {
           });
       } else {
           // Fallback to our downloadFinalFile helper which uses the /v1/file endpoint
-          await downloadFinalFile(job.jobId, completedJob.filename || `${videoId}.${format}`, outputPath);
+          await downloadFinalFile(job.jobId, completedJob.filename || `${videoId}.${format}`, outputPath, apiKey);
       }
     }
     console.log(`[RapidAPI] Download finished successfully: ${filename}`);
+    keyManager.recordDownload(keyObj);
 
   } catch (err) {
     console.error(`[RapidAPI] Error downloading video ${videoId}:`, err.message);
@@ -471,9 +493,7 @@ const runChannelLoop = async (destId) => {
       if (!currentFile) {
         addLog(destId, `[System] Downloading video ${dest.currentIndex + 1}/${dest.videoIds.length}: ${vId}`);
         state.nowDownloading = { id: vId, progress: '0%' };
-        await rateLimiter.checkLimit(destId);
-        await downloadVideo(yt, vId, destDir);
-        rateLimiter.recordDownload();
+        await downloadVideo(destId, yt, vId, destDir);
         state.nowDownloading = null;
         currentFile = path.join(destDir, fs.readdirSync(destDir).find(f => f.includes(vId)));
       }
@@ -497,9 +517,7 @@ const runChannelLoop = async (destId) => {
           addLog(destId, `[System] Buffering next video: ${nextVId}`);
           state.nowDownloading = { id: nextVId, progress: 'Buffered' };
           try {
-            await rateLimiter.checkLimit(destId);
-            await downloadVideo(yt, nextVId, destDir);
-            rateLimiter.recordDownload();
+            await downloadVideo(destId, yt, nextVId, destDir);
             addLog(destId, `[System] Next video buffered.`);
           } catch (e) {
             addLog(destId, `[Error] Failed to buffer next video: ${e.message}`);
