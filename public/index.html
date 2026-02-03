@@ -27,6 +27,54 @@
     .status-light.active { background-color: #28a745; box-shadow: 0 0 8px #28a745; }
     #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 1rem 2rem; border-radius: 5px; opacity: 0; visibility: hidden; transition: opacity 0.5s, visibility 0.5s; z-index: 1000; }
     #toast.show { opacity: 1; visibility: visible; }
+
+    /* Mobile-responsive design */
+    @media (max-width: 768px) {
+      .header {
+        flex-direction: column;
+        padding: 1.5rem 1rem;
+        text-align: center;
+        gap: 1rem;
+      }
+      .header h1 {
+        font-size: 1.3rem;
+      }
+      .container {
+        max-width: 95%;
+        margin: 1rem auto;
+      }
+      .grid {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+      }
+      .card-header, .card-body, .card-footer {
+        padding: 1rem;
+      }
+      button {
+        width: 100%;
+        padding: 0.8rem;
+        font-size: 1rem;
+      }
+      .card-header {
+        flex-direction: column;
+        gap: 0.5rem;
+        align-items: center;
+      }
+      .card-footer div {
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .card-footer div div {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        width: 100%;
+      }
+      input[type="text"], input[type="file"] {
+        padding: 0.7rem;
+        font-size: 1rem;
+      }
+    }
   </style>
 </head>
 <body>
@@ -72,7 +120,7 @@
         <div class="card-footer">
           <form class="upload-form" data-id="${dest.id}">
             <strong>Upload File</strong>
-            <input type="file" name="video" accept="video/mp4,video/webm,video/quicktime" required>
+            <input type="file" name="video" accept="video/*" required>
             <button type="submit" ${dest.isStreaming ? 'disabled' : ''}>Upload Video</button>
           </form>
           <hr style="margin: 1.5rem 0; border-color: #e9ecef;">
