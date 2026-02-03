@@ -42,7 +42,7 @@ app.use(express.static('public'));
 app.get('/api/destinations', (req, res) => {
   const fullDestinations = destinations.map(dest => {
     const destDir = path.join(PLAYLISTS_DIR, dest.id);
-    const videos = fs.existsSync(destDir) ? fs.readdirSync(destDir).filter(f => !f.startsWith('.')) : [];
+    const videos = fs.existsSync(destDir) ? fs.readdirSync(destDir).filter(f => !f.startsWith('.') && f !== 'playlist.txt') : [];
     return { ...dest, playlist: videos, isStreaming: activeStreams.has(dest.id) };
   });
   res.json(fullDestinations);
@@ -93,10 +93,12 @@ app.post('/api/file/add/:id', (req, res) => {
   if (!fs.existsSync(destDir)) return res.status(404).send('Destination not found.');
 
   let filename;
+  let encodedUrl;
   try {
     const parsedUrl = new URL(url);
-    filename = path.basename(parsedUrl.pathname);
-    if (!filename || filename === '/') {
+    encodedUrl = parsedUrl.href;
+    filename = decodeURIComponent(path.basename(parsedUrl.pathname)).replace(/['<>:"/\\|?*]/g, '_');
+    if (!filename || filename === '_') {
        filename = 'video_' + Date.now() + '.mp4';
     }
   } catch (e) {
@@ -104,12 +106,12 @@ app.post('/api/file/add/:id', (req, res) => {
   }
 
   const outputPath = path.join(destDir, filename);
-  console.log(`[API] Starting download: ${url} -> ${outputPath}`);
+  console.log(`[API] Starting download: ${encodedUrl} -> ${outputPath}`);
 
   // Send immediate response to avoid timeouts
   res.status(202).send(`Download started for '${filename}'. It will appear in the playlist shortly.`);
 
-  const curlProcess = spawn('curl', ['-L', '-o', outputPath, url]);
+  const curlProcess = spawn('curl', ['-fL', '-o', outputPath, encodedUrl]);
 
   curlProcess.on('close', (code) => {
     if (code === 0) {
@@ -143,11 +145,11 @@ app.post('/api/stream/start/:id', (req, res) => {
   if (activeStreams.has(id)) return res.status(400).send('Stream is already running.');
 
   const destDir = path.join(PLAYLISTS_DIR, id);
-  const videoFiles = fs.readdirSync(destDir).filter(f => !f.startsWith('.'));
+  const videoFiles = fs.readdirSync(destDir).filter(f => !f.startsWith('.') && f !== 'playlist.txt');
   if (videoFiles.length === 0) return res.status(400).send('Playlist is empty.');
 
   const playlistFile = path.join(destDir, 'playlist.txt');
-  const playlistContent = videoFiles.map(file => `file '${path.join(destDir, file)}'`).join('\n');
+  const playlistContent = videoFiles.map(file => "file '" + path.join(destDir, file).replace(/'/g, "'\\''") + "'").join('\n');
   fs.writeFileSync(playlistFile, playlistContent);
 
   const ffmpegArgs = [
