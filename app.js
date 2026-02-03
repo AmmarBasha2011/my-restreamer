@@ -227,7 +227,7 @@ const extractPlaylistId = (url) => {
 class DownloadCooldownManager {
   constructor() {
     this.lastDownloadTime = 0;
-    this.cooldownMs = 30000; // 30 seconds as per instructions
+    this.cooldownMs = 70000; // 70 seconds to safely stay under 3/min limit
     this.lock = Promise.resolve();
   }
 
@@ -269,10 +269,10 @@ async function fetchVideoInfo(yt, videoId) {
 
 /**
  * Initiates a download job on RapidAPI.
- * Use POST /download (removing /v1 as it returned 404 in logs).
+ * Use POST /v1/download as per docs.
  */
 async function startDownloadJob(url, apiKey, format = 'mp4', quality = "360") {
-  const endpoint = `${RAPIDAPI_BASE}/download`;
+  const endpoint = `${RAPIDAPI_BASE}/v1/download`;
   console.log(`[RapidAPI] POST ${endpoint}`);
   try {
     const options = {
@@ -303,7 +303,7 @@ async function startDownloadJob(url, apiKey, format = 'mp4', quality = "360") {
  */
 async function pollJobStatus(jobId, apiKey) {
   const maxRetries = 12;
-  const endpoint = `${RAPIDAPI_BASE}/status/${jobId}`;
+  const endpoint = `${RAPIDAPI_BASE}/v1/status/${jobId}`;
 
   for (let i = 0; i < maxRetries; i++) {
     try {
@@ -337,11 +337,11 @@ async function pollJobStatus(jobId, apiKey) {
 
 /**
  * Downloads the processed file from RapidAPI.
- * Use /file/{jobId}/video.mp4 (removing /v1 prefix).
+ * Use /v1/file/{jobId}/video.mp4 as per docs.
  */
 async function downloadFinalFile(jobId, filename, outputPath, apiKey) {
   // Using the path-parameter style endpoint as suggested by docs
-  const endpoint = `${RAPIDAPI_BASE}/file/${jobId}/video.mp4`;
+  const endpoint = `${RAPIDAPI_BASE}/v1/file/${jobId}/video.mp4`;
 
   try {
     const response = await fetch(endpoint, {
@@ -355,8 +355,8 @@ async function downloadFinalFile(jobId, filename, outputPath, apiKey) {
 
     if (response.status === 429) throw new Error('TOO_MANY_REQUESTS');
     if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`File fetch failed (${response.status}): ${errorText}`);
+      const errorText = await response.text();
+      throw new Error(`File fetch failed (${response.status}): ${errorText}`);
     }
 
     const fileStream = fs.createWriteStream(outputPath);
@@ -394,7 +394,11 @@ const downloadVideo = async (destId, yt, videoId, destDir, format = 'mp4', reque
 
     return; // Success!
   } catch (err) {
-    addLog(destId, `[RapidAPI] Download failed: ${err.message}`);
+    if (err.message.includes('TOO_MANY_REQUESTS') || err.message.includes('429')) {
+      addLog(destId, `[RateLimit] Critical: 429 Too Many Requests. Stopping loop to protect IP.`);
+    } else {
+      addLog(destId, `[RapidAPI] Download failed: ${err.message}`);
+    }
     throw err;
   }
 };
