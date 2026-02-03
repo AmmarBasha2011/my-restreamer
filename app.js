@@ -227,7 +227,7 @@ const extractPlaylistId = (url) => {
 class DownloadCooldownManager {
   constructor() {
     this.lastDownloadTime = 0;
-    this.cooldownMs = 70000; // 70 seconds to safely stay under 3/min limit
+    this.cooldownMs = 75000; // 75 seconds to safely stay under 3/min limit
     this.lock = Promise.resolve();
   }
 
@@ -244,6 +244,13 @@ class DownloadCooldownManager {
       this.lastDownloadTime = Date.now();
     });
     return this.lock;
+  }
+
+  async waitOnRateLimit(destId) {
+    const waitTime = 300000; // 5 minutes on 429
+    addLog(destId, `[RateLimit] 429 encountered. Waiting 5 minutes for IP reset...`);
+    await new Promise(r => setTimeout(r, waitTime));
+    this.lastDownloadTime = Date.now();
   }
 }
 
@@ -269,10 +276,10 @@ async function fetchVideoInfo(yt, videoId) {
 
 /**
  * Initiates a download job on RapidAPI.
- * Use POST /v1/download as per docs.
+ * Use POST /download (logs showed /v1 returned 404).
  */
 async function startDownloadJob(url, apiKey, format = 'mp4', quality = "360") {
-  const endpoint = `${RAPIDAPI_BASE}/v1/download`;
+  const endpoint = `${RAPIDAPI_BASE}/download`;
   console.log(`[RapidAPI] POST ${endpoint}`);
   try {
     const options = {
@@ -303,7 +310,7 @@ async function startDownloadJob(url, apiKey, format = 'mp4', quality = "360") {
  */
 async function pollJobStatus(jobId, apiKey) {
   const maxRetries = 12;
-  const endpoint = `${RAPIDAPI_BASE}/v1/status/${jobId}`;
+  const endpoint = `${RAPIDAPI_BASE}/status/${jobId}`;
 
   for (let i = 0; i < maxRetries; i++) {
     try {
@@ -337,11 +344,11 @@ async function pollJobStatus(jobId, apiKey) {
 
 /**
  * Downloads the processed file from RapidAPI.
- * Use /v1/file/{jobId}/video.mp4 as per docs.
+ * Use /file/{jobId}/{filename} (logs showed /v1 returned 404).
  */
 async function downloadFinalFile(jobId, filename, outputPath, apiKey) {
   // Using the path-parameter style endpoint as suggested by docs
-  const endpoint = `${RAPIDAPI_BASE}/v1/file/${jobId}/video.mp4`;
+  const endpoint = `${RAPIDAPI_BASE}/file/${jobId}/${encodeURIComponent(filename)}`;
 
   try {
     const response = await fetch(endpoint, {
@@ -395,7 +402,7 @@ const downloadVideo = async (destId, yt, videoId, destDir, format = 'mp4', reque
     return; // Success!
   } catch (err) {
     if (err.message.includes('TOO_MANY_REQUESTS') || err.message.includes('429')) {
-      addLog(destId, `[RateLimit] Critical: 429 Too Many Requests. Stopping loop to protect IP.`);
+      await cooldownManager.waitOnRateLimit(destId);
     } else {
       addLog(destId, `[RapidAPI] Download failed: ${err.message}`);
     }
@@ -474,7 +481,15 @@ const runChannelLoop = async (destId) => {
       if (!currentFile) {
         addLog(destId, `[System] Downloading video ${dest.currentIndex + 1}/${dest.videoIds.length}: ${vId}`);
         state.nowDownloading = { id: vId, progress: '0%' };
-        await downloadVideo(destId, yt, vId, destDir);
+        try {
+          await downloadVideo(destId, yt, vId, destDir);
+        } catch (e) {
+          addLog(destId, `[Error] Failed to download ${vId}: ${e.message}. Skipping to next video...`);
+          state.nowDownloading = null;
+          dest.currentIndex = nextIdx;
+          saveDestinations();
+          continue; // Skip to next video
+        }
         state.nowDownloading = null;
         currentFile = path.join(destDir, fs.readdirSync(destDir).find(f => f.includes(vId)));
       }
