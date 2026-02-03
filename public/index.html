@@ -3,127 +3,302 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Advanced Restreamer</title>
+  <title>INEX Team | Advanced Restreamer</title>
   <style>
-    :root { --primary-color: #6f42c1; --danger-color: #dc3545; --light-gray: #f8f9fa; --gray: #6c757d; --white: #fff; --border-color: #dee2e6; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; margin: 0; background-color: var(--light-gray); color: #343a40; }
-    .header { background-color: var(--primary-color); color: var(--white); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
-    .header h1 { margin: 0; font-size: 1.5rem; }
-    .container { max-width: 90%; margin: 2rem auto; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 2rem; }
-    .card { background: var(--white); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); display: flex; flex-direction: column; }
-    .card-header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
-    .card-body { padding: 1.5rem; flex-grow: 1; }
-    .card-footer { padding: 1rem 1.5rem; background-color: #f8f9fa; border-top: 1px solid var(--border-color); }
-    h2 { margin: 0; font-size: 1.2rem; }
-    button { background-color: var(--primary-color); color: var(--white); border: none; border-radius: 5px; padding: 0.6rem 1.2rem; cursor: pointer; font-size: 0.95rem; transition: background-color 0.2s; }
-    button:hover { filter: brightness(90%); }
-    button.danger { background-color: var(--danger-color); }
-    button:disabled { background-color: var(--gray); cursor: not-allowed; }
-    input[type="text"], input[type="file"] { width: 100%; padding: 0.5rem; border: 1px solid #ced4da; border-radius: 4px; margin-bottom: 1rem; box-sizing: border-box; }
-    ul { list-style: none; padding: 0; max-height: 150px; overflow-y: auto; }
-    .playlist-item { display: flex; justify-content: space-between; align-items: center; background: #f1f3f5; padding: 0.5rem 1rem; border-radius: 4px; margin-bottom: 0.5rem; font-size: 0.9rem; }
-    .status-light { height: 12px; width: 12px; background-color: var(--gray); border-radius: 50%; transition: background-color 0.5s; }
-    .status-light.active { background-color: #28a745; box-shadow: 0 0 8px #28a745; }
-    .progress-stats { color: var(--gray); font-variant-numeric: tabular-nums; }
-    #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 1rem 2rem; border-radius: 5px; opacity: 0; visibility: hidden; transition: opacity 0.5s, visibility 0.5s; z-index: 1000; }
-    #toast.show { opacity: 1; visibility: visible; }
+    :root {
+      --bg-color: #0B0F14;
+      --card-bg: #121826;
+      --primary: #3B82F6;
+      --secondary: #7C3AED;
+      --success: #22C55E;
+      --danger: #EF4444;
+      --text-main: #E5E7EB;
+      --text-muted: #9CA3AF;
+      --border: #1F2937;
+    }
 
-    /* Mobile-responsive design */
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      margin: 0;
+      padding: 0;
+      line-height: 1.5;
+    }
+
+    .header {
+      background-color: var(--card-bg);
+      padding: 1rem 2rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header h1 {
+      margin: 0;
+      font-size: 1.25rem;
+      background: linear-gradient(to right, var(--primary), var(--secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      font-weight: 800;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+      gap: 1.5rem;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    }
+
+    .card-header {
+      padding: 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .card-header h2 {
+      margin: 0;
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+
+    .card-body {
+      padding: 1.25rem;
+      flex-grow: 1;
+    }
+
+    .card-footer {
+      padding: 1.25rem;
+      background-color: rgba(255, 255, 255, 0.02);
+      border-top: 1px solid var(--border);
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      background: rgba(156, 163, 175, 0.1);
+      color: var(--text-muted);
+    }
+
+    .status-badge.live {
+      background: rgba(34, 197, 94, 0.1);
+      color: var(--success);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: currentColor;
+    }
+
+    .status-badge.live .status-dot {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .5; }
+    }
+
+    button {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 0.6rem 1.2rem;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 0.9rem;
+    }
+
+    button:hover {
+      filter: brightness(110%);
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      background: var(--text-muted);
+      cursor: not-allowed;
+      transform: none;
+      opacity: 0.5;
+    }
+
+    button.danger {
+      background: var(--danger);
+    }
+
+    button.secondary {
+      background: var(--secondary);
+    }
+
+    input {
+      background: var(--bg-color);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      padding: 0.75rem;
+      border-radius: 8px;
+      width: 100%;
+      box-sizing: border-box;
+      margin-bottom: 1rem;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: var(--primary);
+    }
+
+    .playlist-box {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      padding: 0.75rem;
+      max-height: 150px;
+      overflow-y: auto;
+      margin-top: 0.5rem;
+    }
+
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .playlist-item {
+      font-size: 0.85rem;
+      padding: 0.4rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    .playlist-item:last-child {
+      border-bottom: none;
+    }
+
+    .logs-container {
+      margin-top: 2rem;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .logs-header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logs-body {
+      padding: 1rem;
+      height: 300px;
+      overflow-y: auto;
+      font-family: 'Fira Code', 'Courier New', monospace;
+      font-size: 0.8rem;
+      background: #05070a;
+    }
+
+    .log-entry {
+      margin-bottom: 0.25rem;
+      line-height: 1.4;
+    }
+
+    .log-time { color: var(--text-muted); margin-right: 0.5rem; }
+    .log-type-info { color: var(--primary); }
+    .log-type-success { color: var(--success); }
+    .log-type-error { color: var(--danger); }
+    .log-type-sync { color: var(--secondary); }
+
     @media (max-width: 768px) {
-      body {
-        -webkit-text-size-adjust: 100%;
-      }
       .header {
-        flex-direction: column;
-        padding: 1.5rem 1rem;
-        text-align: center;
-        gap: 1rem;
-        position: sticky;
-        top: 0;
-        z-index: 100;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      }
-      .header h1 {
-        font-size: 1.2rem;
-      }
-      .container {
-        max-width: 100%;
-        margin: 0.5rem 0;
-        padding: 0 0.75rem;
+        padding: 1rem;
       }
       .grid {
         grid-template-columns: 1fr;
-        gap: 1rem;
       }
-      .card {
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+      .logs-body {
+        height: 200px;
       }
-      .card-header, .card-body, .card-footer {
-        padding: 1.25rem 1rem;
-      }
-      button {
-        width: 100%;
-        padding: 0.9rem;
-        font-size: 1rem;
-        border-radius: 8px;
-        font-weight: 500;
-      }
-      .card-header {
-        flex-direction: row;
-        justify-content: space-between;
-        align-items: center;
-        gap: 0.5rem;
-      }
-      .card-header h2 {
-        font-size: 1.1rem;
-        word-break: break-word;
-      }
-      .card-footer div {
-        flex-direction: column;
-        gap: 0.75rem;
-      }
-      .card-footer div div {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-        width: 100%;
-      }
-      input[type="text"], input[type="file"] {
-        padding: 0.8rem;
-        font-size: 1rem;
-        border-radius: 8px;
-      }
-      .playlist-item {
-        padding: 0.75rem;
-      }
-      #toast {
-        width: 80%;
-        bottom: 30px;
-        padding: 1rem;
-        text-align: center;
-      }
+    }
+
+    #toast {
+      position: fixed;
+      bottom: 2rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--secondary);
+      color: white;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      font-weight: 600;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.3s;
+      z-index: 1000;
+    }
+
+    #toast.show {
+      opacity: 1;
+      visibility: visible;
+      bottom: 3rem;
     }
   </style>
 </head>
 <body>
 
-  <div class="header">
-    <h1>Advanced Restreamer</h1>
-    <button id="add-dest-btn">+ Add New Stream Channel</button>
-  </div>
+  <header class="header">
+    <h1>INEX Team Restreamer</h1>
+    <button id="add-dest-btn">+ New Channel</button>
+  </header>
 
-  <div class="container">
+  <main class="container">
     <div id="destinations-grid" class="grid"></div>
-  </div>
+
+    <section class="logs-container">
+      <div class="logs-header">
+        <h2 style="margin:0; font-size:1rem;">System Activity Logs</h2>
+        <button onclick="clearLogs()" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" class="secondary">Clear</button>
+      </div>
+      <div id="logs-body" class="logs-body"></div>
+    </section>
+  </main>
 
   <div id="toast"></div>
 
   <script>
     const grid = document.getElementById('destinations-grid');
-    const addDestBtn = document.getElementById('add-dest-btn');
+    const logsBody = document.getElementById('logs-body');
     const toast = document.getElementById('toast');
+    const addDestBtn = document.getElementById('add-dest-btn');
 
     const api = {
       get: (endpoint) => fetch(endpoint).then(res => res.ok ? res.json() : Promise.reject(res)),
@@ -131,64 +306,112 @@
       delete: (endpoint) => fetch(endpoint, { method: 'DELETE' })
     };
 
-    function createChannelCard(dest) {
-      const card = document.createElement('div');
-      card.className = 'card';
-      card.id = `dest-${dest.id}`;
-      updateCardContent(card, dest);
-      return card;
+    function showToast(message, isError = false) {
+      toast.textContent = message;
+      toast.style.background = isError ? 'var(--danger)' : 'var(--secondary)';
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
     }
+
+    function addLog(message, type = 'info') {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      const now = new Date().toLocaleTimeString();
+      entry.innerHTML = `<span class="log-time">[${now}]</span> <span class="log-type-${type}">${type.toUpperCase()}</span> ${message}`;
+      logsBody.appendChild(entry);
+      logsBody.scrollTop = logsBody.scrollHeight;
+    }
+
+    function clearLogs() {
+      logsBody.innerHTML = '';
+    }
+
+    // SSE Setup for Logs
+    const eventSource = new EventSource('/api/logs');
+    eventSource.onmessage = (event) => {
+      const log = JSON.parse(event.data);
+      addLog(log.message, log.type);
+    };
 
     function updateCardContent(card, dest) {
       if (!card.innerHTML) {
         card.innerHTML = `
           <div class="card-header">
             <h2 class="dest-name"></h2>
-            <div style="display: flex; align-items: center; gap: 10px;">
-              <div class="status-light"></div>
-              <button class="danger delete-btn">Delete</button>
+            <div class="status-badge">
+              <div class="status-dot"></div>
+              <span class="status-text">Offline</span>
             </div>
           </div>
           <div class="card-body">
-            <strong>Playlist</strong>
-            <ul class="playlist-ul" id="playlist-${dest.id}"></ul>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem;">Repository Sync</div>
+            <form class="repo-form" data-id="${dest.id}">
+              <input type="text" name="repoUrl" placeholder="https://github.com/owner/repo" required>
+              <button type="submit" style="width:100%">Sync Repository</button>
+            </form>
+            <div style="margin-top: 1.5rem;">
+              <div style="font-size: 0.8rem; color: var(--text-muted);">Playlist Content</div>
+              <div class="playlist-box">
+                <ul class="playlist-ul"></ul>
+              </div>
+            </div>
           </div>
           <div class="card-footer">
-            <form class="repo-form" data-id="${dest.id}">
-              <strong>Git Repository Sync</strong>
-              <input type="text" name="repoUrl" placeholder="https://github.com/..." required>
-              <button type="submit">Sync Repo</button>
-            </form>
-            <div style="margin-top: 1rem; display: flex; justify-content: space-between;">
-              <div class="stream-controls">
-                <button class="start-btn">▶️ Start</button>
-                <button class="danger stop-btn">⏹️ Stop</button>
+            <div style="display: flex; gap: 0.5rem; justify-content: space-between;">
+              <div style="display: flex; gap: 0.5rem;">
+                <button class="start-btn success">▶ Start</button>
+                <button class="stop-btn danger">⏹ Stop</button>
               </div>
-              <button class="danger clear-btn">Clear Playlist</button>
+              <button class="delete-btn danger" style="opacity: 0.6;">Delete</button>
             </div>
           </div>
         `;
+
         card.querySelector('.delete-btn').onclick = () => deleteDestination(dest.id);
         card.querySelector('.start-btn').onclick = () => startStream(dest.id);
         card.querySelector('.stop-btn').onclick = () => stopStream(dest.id);
-        card.querySelector('.clear-btn').onclick = () => clearPlaylist(dest.id);
-        attachRepoHandler(card.querySelector('.repo-form'));
+
+        const form = card.querySelector('.repo-form');
+        form.onsubmit = async (e) => {
+          e.preventDefault();
+          const repoUrl = form.repoUrl.value;
+          const btn = form.querySelector('button');
+          btn.disabled = true;
+          btn.textContent = 'Syncing...';
+          try {
+            const res = await api.post(`/api/destinations/${dest.id}/repo`, { repoUrl });
+            showToast(await res.text());
+          } catch (e) {
+            showToast('Sync failed', true);
+          } finally {
+            btn.disabled = false;
+            btn.textContent = 'Sync Repository';
+          }
+        };
       }
 
       card.querySelector('.dest-name').textContent = dest.name;
-      card.querySelector('.status-light').className = `status-light ${dest.isStreaming ? 'active' : ''}`;
+      const badge = card.querySelector('.status-badge');
+      const statusText = card.querySelector('.status-text');
+
+      if (dest.isStreaming) {
+        badge.classList.add('live');
+        statusText.textContent = 'Live';
+      } else {
+        badge.classList.remove('live');
+        statusText.textContent = 'Offline';
+      }
+
       card.querySelector('.start-btn').disabled = dest.isStreaming;
       card.querySelector('.stop-btn').disabled = !dest.isStreaming;
-      card.querySelector('.clear-btn').disabled = dest.isStreaming;
-      card.querySelector('.repo-form button').disabled = dest.isStreaming;
 
-      const repoInput = card.querySelector('.repo-form input[name="repoUrl"]');
-      if (document.activeElement !== repoInput && dest.repoUrl && repoInput.value !== dest.repoUrl) {
+      const repoInput = card.querySelector('input[name="repoUrl"]');
+      if (document.activeElement !== repoInput && dest.repoUrl) {
         repoInput.value = dest.repoUrl;
       }
 
       const playlistUl = card.querySelector('.playlist-ul');
-      const newPlaylistHtml = dest.playlist.length > 0 ? dest.playlist.map(f => `<li class="playlist-item">${f}</li>`).join('') : '<li>Empty</li>';
+      const newPlaylistHtml = dest.playlist.length > 0 ? dest.playlist.map(f => `<li class="playlist-item">${f}</li>`).join('') : '<li class="playlist-item">No videos found</li>';
       if (playlistUl.innerHTML !== newPlaylistHtml) {
         playlistUl.innerHTML = newPlaylistHtml;
       }
@@ -197,106 +420,63 @@
     async function refreshDestinations() {
       try {
         const destinations = await api.get('/api/destinations');
-
-        // Remove cards that are no longer present
         const destIds = new Set(destinations.map(d => d.id));
+
         Array.from(grid.children).forEach(card => {
-          const id = card.id.replace('dest-', '');
-          if (!destIds.has(id)) grid.removeChild(card);
+          if (!destIds.has(card.id.replace('dest-', ''))) grid.removeChild(card);
         });
 
         destinations.forEach(dest => {
           let card = document.getElementById(`dest-${dest.id}`);
           if (!card) {
-            card = createChannelCard(dest);
+            card = document.createElement('div');
+            card.className = 'card';
+            card.id = `dest-${dest.id}`;
             grid.appendChild(card);
-          } else {
-            updateCardContent(card, dest);
           }
+          updateCardContent(card, dest);
         });
       } catch (err) {
         console.error(err);
-        showToast('Error fetching data.', true);
       }
     }
 
-    function attachRepoHandler(form) {
-      if (!form) return;
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const id = form.dataset.id;
-        const repoUrl = form.querySelector('input[name="repoUrl"]').value;
-        const btn = form.querySelector('button');
-        btn.textContent = 'Syncing...';
-        btn.disabled = true;
-
-        try {
-          const response = await api.post(`/api/destinations/${id}/repo`, { repoUrl });
-          const text = await response.text();
-          showToast(text, !response.ok);
-        } catch (err) {
-          showToast('Request failed', true);
-        } finally {
-          btn.textContent = 'Sync Repo';
-          btn.disabled = false;
-        }
-      });
-    }
-
-    addDestBtn.addEventListener('click', async () => {
-      const name = prompt('Enter a name for the new stream channel:');
+    addDestBtn.onclick = async () => {
+      const name = prompt('Channel Name:');
       if (!name) return;
-      const key = prompt(`Enter the stream key for "${name}":`);
+      const key = prompt('Stream Key:');
       if (!key) return;
 
-      const response = await api.post('/api/destinations', { name, key });
-      if (response.ok) {
-        showToast('Channel added successfully');
+      try {
+        await api.post('/api/destinations', { name, key });
+        showToast('Channel added');
         refreshDestinations();
-      } else {
-        showToast('Failed to add channel: ' + await response.text(), true);
+      } catch (e) {
+        showToast('Failed to add channel', true);
       }
-    });
+    };
 
     window.deleteDestination = async (id) => {
-      if (confirm('Are you sure you want to delete this channel and all its videos?')) {
-        const response = await api.delete(`/api/destinations/${id}`);
-        showToast(await response.text(), !response.ok);
-        if (response.ok) refreshDestinations();
+      if (confirm('Delete this channel?')) {
+        await api.delete(`/api/destinations/${id}`);
+        refreshDestinations();
       }
     };
 
     window.startStream = async (id) => {
-      const response = await api.post(`/api/stream/start/${id}`, {});
-      showToast(await response.text(), !response.ok);
-      if (response.ok) setTimeout(refreshDestinations, 1000);
+      const res = await api.post(`/api/stream/start/${id}`, {});
+      showToast(await res.text());
+      refreshDestinations();
     };
 
     window.stopStream = async (id) => {
-      const response = await api.post(`/api/stream/stop/${id}`, {});
-      showToast(await response.text(), !response.ok);
-      if (response.ok) setTimeout(refreshDestinations, 1000);
-    };
-
-    window.clearPlaylist = async (id) => {
-      if (confirm('Are you sure you want to clear this playlist?')) {
-        const response = await api.post(`/api/playlist/clear/${id}`, {});
-        showToast(await response.text(), !response.ok);
-        if (response.ok) refreshDestinations();
-      }
-    };
-
-    function showToast(message, isError = false) {
-      toast.textContent = message;
-      toast.style.backgroundColor = isError ? 'var(--danger-color)' : '#333';
-      toast.classList.add('show');
-      setTimeout(() => toast.classList.remove('show'), 3000);
-    }
-
-    document.addEventListener('DOMContentLoaded', () => {
+      const res = await api.post(`/api/stream/stop/${id}`, {});
+      showToast(await res.text());
       refreshDestinations();
-      setInterval(refreshDestinations, 7000); // Periodically refresh status
-    });
+    };
+
+    refreshDestinations();
+    setInterval(refreshDestinations, 5000);
   </script>
 </body>
 </html>

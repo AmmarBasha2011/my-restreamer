@@ -5,8 +5,16 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 const app = express();
-const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.mov', '.avi', '.flv', '.wmv'];
+const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.mov', '.avi', '.flv', '.wmv', '.webm'];
 const PORT = process.env.PORT || 3000;
+
+// --- LOGGING SYSTEM (SSE) ---
+let clients = [];
+const logToClients = (message, type = 'info') => {
+  console.log(`[${type.toUpperCase()}] ${message}`);
+  const data = JSON.stringify({ message, type, timestamp: new Date().toISOString() });
+  clients.forEach(client => client.res.write(`data: ${data}\n\n`));
+};
 
 // --- FILE PATHS ---
 const PLAYLISTS_DIR = path.join(__dirname, 'playlists');
@@ -33,67 +41,59 @@ const saveDestinations = () => {
   fs.writeFileSync(DESTINATIONS_FILE, JSON.stringify(destinations, null, 2));
 };
 
+const downloadFile = async (url, outputPath) => {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to download ${url}: ${response.statusText}`);
+  const buffer = await response.arrayBuffer();
+  await fs.promises.writeFile(outputPath, Buffer.from(buffer));
+};
+
 const syncRepo = async (id) => {
   const dest = destinations.find(d => d.id === id);
   if (!dest || !dest.repoUrl) return;
 
+  logToClients(`Syncing repository for ${dest.name}...`, 'sync');
   const destDir = path.join(PLAYLISTS_DIR, id);
-  const repoDir = path.join(destDir, '.repo');
 
   try {
-    if (!fs.existsSync(repoDir)) {
-      console.log(`[Sync] Cloning repo for ${dest.name}: ${dest.repoUrl}`);
-      await new Promise((resolve, reject) => {
-        const git = spawn('git', ['clone', '--depth', '1', dest.repoUrl, repoDir]);
-        git.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Git clone failed with code ${code}`)));
-      });
-    } else {
-      console.log(`[Sync] Pulling updates for ${dest.name}`);
-      await new Promise((resolve, reject) => {
-        const git = spawn('git', ['-C', repoDir, 'pull']);
-        git.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Git pull failed with code ${code}`)));
-      });
+    // Parse GitHub URL
+    let repoMatch = dest.repoUrl.match(/github\.com\/([^/]+)\/([^/.]+)/);
+    if (!repoMatch) {
+      logToClients(`Invalid GitHub URL: ${dest.repoUrl}`, 'error');
+      return;
     }
+    const [_, owner, repo] = repoMatch;
 
-    const findVideos = async (dir, fileList = []) => {
-      const files = await fs.promises.readdir(dir);
-      for (const file of files) {
-        const filePath = path.join(dir, file);
-        const stats = await fs.promises.stat(filePath);
-        if (stats.isDirectory()) {
-          if (file !== '.git') await findVideos(filePath, fileList);
-        } else {
-          if (VIDEO_EXTENSIONS.includes(path.extname(file).toLowerCase())) {
-            fileList.push(filePath);
-          }
-        }
-      }
-      return fileList;
-    };
+    // Fetch repo tree via GitHub API
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`;
+    const res = await fetch(apiUrl);
+    if (!res.ok) throw new Error(`GitHub API error: ${res.statusText}`);
+    const data = await res.json();
 
-    const videosInRepo = await findVideos(repoDir);
-    const videoFilenamesInRepo = videosInRepo.map(v => path.basename(v));
+    const videoFiles = data.tree.filter(f => f.type === 'blob' && VIDEO_EXTENSIONS.includes(path.extname(f.path).toLowerCase()));
+    const videoFilenamesInRepo = videoFiles.map(f => path.basename(f.path));
 
-    for (const videoPath of videosInRepo) {
-      const filename = path.basename(videoPath);
+    // Download new/updated videos
+    for (const file of videoFiles) {
+      const filename = path.basename(file.path);
       const targetPath = path.join(destDir, filename);
+      const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${file.path}`;
 
-      const statsRepo = await fs.promises.stat(videoPath);
-      let shouldCopy = true;
+      let shouldDownload = true;
       if (fs.existsSync(targetPath)) {
-        const statsTarget = await fs.promises.stat(targetPath);
-        // Compare size and mtime (with 1s tolerance for some filesystems)
-        if (statsRepo.size === statsTarget.size && Math.abs(statsRepo.mtime.getTime() - statsTarget.mtime.getTime()) < 1000) {
-          shouldCopy = false;
+        const stats = await fs.promises.stat(targetPath);
+        if (stats.size === file.size) {
+          shouldDownload = false;
         }
       }
 
-      if (shouldCopy) {
-        await fs.promises.copyFile(videoPath, targetPath);
-        console.log(`[Sync] Syncing video: ${filename}`);
+      if (shouldDownload) {
+        logToClients(`Downloading: ${filename}`, 'sync');
+        await downloadFile(rawUrl, targetPath);
       }
     }
 
+    // Cleanup: remove old videos or non-video files
     const filesInDest = await fs.promises.readdir(destDir);
     for (const file of filesInDest) {
       const filePath = path.join(destDir, file);
@@ -101,20 +101,19 @@ const syncRepo = async (id) => {
       if (stats.isDirectory()) continue;
       if (file === 'playlist.txt') continue;
 
-      const isVideo = VIDEO_EXTENSIONS.includes(path.extname(file).toLowerCase());
-      if (isVideo) {
+      if (VIDEO_EXTENSIONS.includes(path.extname(file).toLowerCase())) {
         if (!videoFilenamesInRepo.includes(file)) {
           await fs.promises.unlink(filePath);
-          console.log(`[Sync] Removed old video: ${file}`);
+          logToClients(`Removed old video: ${file}`, 'info');
         }
       } else {
-        // Delete any non-video file from playlist dir (as requested)
         await fs.promises.unlink(filePath);
-        console.log(`[Sync] Removed non-video file: ${file}`);
+        logToClients(`Removed non-video file: ${file}`, 'info');
       }
     }
+    logToClients(`Sync complete for ${dest.name}`, 'success');
   } catch (err) {
-    console.error(`[Sync] Error syncing repo for ${dest.name}:`, err.message);
+    logToClients(`Sync failed for ${dest.name}: ${err.message}`, 'error');
   }
 };
 
@@ -129,6 +128,21 @@ setInterval(() => {
 app.use(express.json());
 app.use(express.static('public'));
 
+// --- API: REAL-TIME LOGS (SSE) ---
+app.get('/api/logs', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const clientId = Date.now();
+  const newClient = { id: clientId, res };
+  clients.push(newClient);
+
+  req.on('close', () => {
+    clients = clients.filter(c => c.id !== clientId);
+  });
+});
 
 // --- API: DESTINATION & PLAYLIST MANAGEMENT ---
 
@@ -185,6 +199,7 @@ app.post('/api/destinations/:id/repo', async (req, res) => {
   dest.repoUrl = repoUrl;
   saveDestinations();
 
+  logToClients(`Repository updated for ${dest.name}: ${repoUrl}`, 'info');
   res.status(202).send('Repository URL updated. Sync started in background.');
 
   // Trigger immediate sync
@@ -228,9 +243,17 @@ app.post('/api/stream/start/:id', (req, res) => {
   const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
   activeStreams.set(id, ffmpegProcess);
 
-  ffmpegProcess.stderr.on('data', (data) => console.error(`[${dest.name}] ffmpeg: ${data}`));
+  logToClients(`Stream started for ${dest.name}`, 'success');
+
+  ffmpegProcess.stderr.on('data', (data) => {
+    const msg = data.toString();
+    if (msg.includes('Error') || msg.includes('failed')) {
+      logToClients(`[${dest.name}] FFmpeg: ${msg}`, 'error');
+    }
+  });
+
   ffmpegProcess.on('close', (code) => {
-    console.log(`[${dest.name}] stream stopped (code ${code})`);
+    logToClients(`Stream stopped for ${dest.name} (code ${code})`, code === 0 ? 'info' : 'error');
     activeStreams.delete(id);
     if (fs.existsSync(playlistFile)) fs.unlinkSync(playlistFile); // Clean up playlist file
   });
@@ -240,10 +263,11 @@ app.post('/api/stream/start/:id', (req, res) => {
 
 app.post('/api/stream/stop/:id', (req, res) => {
   const { id } = req.params;
-  console.log(`[API] Action: Stop Stream | Destination ID: ${id}`);
+  const dest = destinations.find(d => d.id === id);
   const process = activeStreams.get(id);
 
   if (process) {
+    logToClients(`Stopping stream for ${dest ? dest.name : id}`, 'info');
     process.kill('SIGKILL');
     activeStreams.delete(id);
     res.status(200).send(`Stream stopped.`);
@@ -255,4 +279,9 @@ app.post('/api/stream/stop/:id', (req, res) => {
 // --- SERVER START ---
 app.listen(PORT, () => {
   console.log(`Per-stream playlist Restreamer running on http://localhost:${PORT}`);
+
+  // Initial sync on startup
+  destinations.forEach(dest => {
+    if (dest.repoUrl) syncRepo(dest.id);
+  });
 });
