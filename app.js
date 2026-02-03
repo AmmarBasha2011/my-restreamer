@@ -19,7 +19,8 @@ const RAPIDAPI_KEYS = [
   'e7f8ca51bemsh02fcafaf0277020p1e3154jsn9dcf4448d4ca',
   'af318920e4msh478e356ae0b8d0ep1f081cjsn874b37c1848e'
 ];
-const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST || 'yt-video-audio-downloader-api.p.rapidapi.com';
+const RAPIDAPI_HOST = 'yt-video-audio-downloader-api.p.rapidapi.com';
+const RAPIDAPI_BASE = `https://${RAPIDAPI_HOST}`;
 const RAPIDAPI_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 // Provide JS evaluator for deciphering (Fix for youtubei.js + jintr)
@@ -268,16 +269,17 @@ async function fetchVideoInfo(yt, videoId) {
 
 /**
  * Initiates a download job on RapidAPI.
- * Use POST /v1/download as per instructions.
+ * Use POST /download (removing /v1 as it returned 404 in logs).
  */
 async function startDownloadJob(url, apiKey, format = 'mp4', quality = "360") {
-  const endpoint = `https://${RAPIDAPI_HOST}/v1/download`;
+  const endpoint = `${RAPIDAPI_BASE}/download`;
+  console.log(`[RapidAPI] POST ${endpoint}`);
   try {
     const options = {
       method: 'POST',
       headers: {
-        'x-rapidapi-host': RAPIDAPI_HOST,
-        'x-rapidapi-key': apiKey,
+        'X-RapidAPI-Host': RAPIDAPI_HOST,
+        'X-RapidAPI-Key': apiKey,
         'User-Agent': RAPIDAPI_USER_AGENT,
         'Content-Type': 'application/json'
       },
@@ -301,15 +303,15 @@ async function startDownloadJob(url, apiKey, format = 'mp4', quality = "360") {
  */
 async function pollJobStatus(jobId, apiKey) {
   const maxRetries = 12;
-  const endpoint = `https://${RAPIDAPI_HOST}/v1/status/${jobId}`;
+  const endpoint = `${RAPIDAPI_BASE}/status/${jobId}`;
 
   for (let i = 0; i < maxRetries; i++) {
     try {
       const response = await fetch(endpoint, {
         method: 'GET',
         headers: {
-          'x-rapidapi-host': RAPIDAPI_HOST,
-          'x-rapidapi-key': apiKey,
+          'X-RapidAPI-Host': RAPIDAPI_HOST,
+          'X-RapidAPI-Key': apiKey,
           'User-Agent': RAPIDAPI_USER_AGENT
         }
       });
@@ -335,18 +337,18 @@ async function pollJobStatus(jobId, apiKey) {
 
 /**
  * Downloads the processed file from RapidAPI.
- * Use /v1/file/{jobId}/video.mp4 as suggested.
+ * Use /file/{jobId}/video.mp4 (removing /v1 prefix).
  */
 async function downloadFinalFile(jobId, filename, outputPath, apiKey) {
   // Using the path-parameter style endpoint as suggested by docs
-  const endpoint = `https://${RAPIDAPI_HOST}/v1/file/${jobId}/video.mp4`;
+  const endpoint = `${RAPIDAPI_BASE}/file/${jobId}/video.mp4`;
 
   try {
     const response = await fetch(endpoint, {
       method: 'GET',
       headers: {
-        'x-rapidapi-host': RAPIDAPI_HOST,
-        'x-rapidapi-key': apiKey,
+        'X-RapidAPI-Host': RAPIDAPI_HOST,
+        'X-RapidAPI-Key': apiKey,
         'User-Agent': RAPIDAPI_USER_AGENT
       }
     });
