@@ -1,5 +1,4 @@
 const express = require('express');
-const multer = require('multer');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -37,20 +36,6 @@ const saveDestinations = () => {
 app.use(express.json());
 app.use(express.static('public'));
 
-// --- MULTER STORAGE for per-destination uploads ---
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const destDir = path.join(PLAYLISTS_DIR, req.params.id);
-    if (!fs.existsSync(destDir)) {
-      return cb(new Error('Destination playlist does not exist.'), false);
-    }
-    cb(null, destDir);
-  },
-  filename: (req, file, cb) => {
-    cb(null, Buffer.from(file.originalname, 'latin1').toString('utf8')); // Handle special characters
-  }
-});
-const upload = multer({ storage: storage });
 
 // --- API: DESTINATION & PLAYLIST MANAGEMENT ---
 
@@ -95,16 +80,52 @@ saveDestinations();
 
 // --- API: Per-Destination Playlist Actions ---
 
-app.post('/api/upload/:id', upload.array('video'), (req, res) => {
-  if (!req.files || req.files.length === 0) return res.status(400).send('No files uploaded.');
-  const filenames = req.files.map(f => f.originalname).join(', ');
-  res.json({ success: true, message: `Videos [${filenames}] uploaded.` });
+app.post('/api/file/add/:id', (req, res) => {
+  const { id } = req.params;
+  const { url } = req.body;
+
+  if (!url) return res.status(400).send('URL is required.');
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    return res.status(400).send('Invalid URL protocol. Only http and https are supported.');
+  }
+
+  const destDir = path.join(PLAYLISTS_DIR, id);
+  if (!fs.existsSync(destDir)) return res.status(404).send('Destination not found.');
+
+  let filename;
+  try {
+    const parsedUrl = new URL(url);
+    filename = path.basename(parsedUrl.pathname);
+    if (!filename || filename === '/') {
+       filename = 'video_' + Date.now() + '.mp4';
+    }
+  } catch (e) {
+    return res.status(400).send('Invalid URL.');
+  }
+
+  const outputPath = path.join(destDir, filename);
+  console.log(`[API] Starting download: ${url} -> ${outputPath}`);
+
+  // Send immediate response to avoid timeouts
+  res.status(202).send(`Download started for '${filename}'. It will appear in the playlist shortly.`);
+
+  const curlProcess = spawn('curl', ['-L', '-o', outputPath, url]);
+
+  curlProcess.on('close', (code) => {
+    if (code === 0) {
+      console.log(`[API] Download complete: ${filename}`);
+    } else {
+      console.error(`[API] Download failed with code ${code} for URL: ${url}`);
+      // Clean up partial file if any
+      if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+    }
+  });
 });
 
 app.post('/api/playlist/clear/:id', (req, res) => {
   const { id } = req.params;
   if (activeStreams.has(id)) return res.status(400).send('Cannot clear playlist while stream is active.');
-  
+
   const destDir = path.join(PLAYLISTS_DIR, id);
   if (!fs.existsSync(destDir)) return res.status(404).send('Playlist not found.');
 
@@ -113,52 +134,6 @@ app.post('/api/playlist/clear/:id', (req, res) => {
 });
 
 // --- API: STREAM CONTROL ---
-
-app.post('/api/youtube/add/:id', (req, res) => {
-  const { id } = req.params;
-  const { url } = req.body;
-  console.log(`[API] Action: Add from YouTube | Destination ID: ${id} | URL: ${url}`);
-
-  if (!url) return res.status(400).send('YouTube URL is required.');
-
-  const destDir = path.join(PLAYLISTS_DIR, id);
-  if (!fs.existsSync(destDir)) return res.status(404).send('Destination not found.');
-
-  const COOKIE_FILE = path.join(__dirname, 'www.youtube.com_cookies.txt');
-
-  const ytdlpArgs = [
-    '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', // Get a compatible format
-    '-o', path.join(destDir, '%(title)s.%(ext)s'), // Output to the correct playlist folder
-  ];
-
-  if (fs.existsSync(COOKIE_FILE)) {
-    console.log('[yt-dlp] Found cookies file. Adding it to arguments.');
-    ytdlpArgs.push('--cookies', COOKIE_FILE);
-  }
-
-  ytdlpArgs.push(url);
-
-  console.log(`[yt-dlp] Starting download with args: ${ytdlpArgs.join(' ')}`);
-  const ytdlpProcess = spawn('yt-dlp', ytdlpArgs);
-
-  ytdlpProcess.stdout.on('data', (data) => {
-    console.log(`[yt-dlp] stdout: ${data}`);
-  });
-
-  ytdlpProcess.stderr.on('data', (data) => {
-    console.error(`[yt-dlp] stderr: ${data}`);
-  });
-
-  ytdlpProcess.on('close', (code) => {
-    if (code === 0) {
-      console.log(`[yt-dlp] Download finished successfully for URL: ${url}`);
-    } else {
-      console.error(`[yt-dlp] Process exited with code ${code} for URL: ${url}`);
-    }
-  });
-
-  res.status(202).send('Download started. The video will be added to the playlist shortly.');
-});
 
 app.post('/api/stream/start/:id', (req, res) => {
   const { id } = req.params;

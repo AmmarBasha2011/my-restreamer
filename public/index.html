@@ -131,8 +131,6 @@
       delete: (endpoint) => fetch(endpoint, { method: 'DELETE' })
     };
 
-    const activeUploads = new Set();
-
     function createChannelCard(dest) {
       const card = document.createElement('div');
       card.className = 'card';
@@ -142,72 +140,53 @@
     }
 
     function updateCardContent(card, dest) {
-      const isUploading = activeUploads.has(dest.id);
-
-      // If uploading or user has selected a file, don't overwrite the form/footer
-      const uploadInput = card.querySelector('input[name="video"]');
-      const youtubeInput = card.querySelector('input[name="url"]');
-      const hasFile = uploadInput && uploadInput.files.length > 0;
-      const hasYoutubeUrl = youtubeInput && youtubeInput.value.length > 0;
-
-      if (card.innerHTML && (isUploading || hasFile || hasYoutubeUrl)) {
-        // Only update the playlist and status light if we are "busy"
-        const statusLight = card.querySelector('.status-light');
-        if (statusLight) statusLight.className = `status-light ${dest.isStreaming ? 'active' : ''}`;
-
-        const playlistUl = card.querySelector(`#playlist-${dest.id}`);
-        if (playlistUl) {
-          playlistUl.innerHTML = dest.playlist.length > 0 ? dest.playlist.map(f => `<li class="playlist-item">${f}</li>`).join('') : '<li>Empty</li>';
-        }
-        return;
+      if (!card.innerHTML) {
+        card.innerHTML = `
+          <div class="card-header">
+            <h2 class="dest-name"></h2>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <div class="status-light"></div>
+              <button class="danger delete-btn">Delete</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <strong>Playlist</strong>
+            <ul class="playlist-ul" id="playlist-${dest.id}"></ul>
+          </div>
+          <div class="card-footer">
+            <form class="link-form" data-id="${dest.id}">
+              <strong>Get file by link</strong>
+              <input type="text" name="url" placeholder="https://raw.githubusercontent.com/..." required>
+              <button type="submit">Get Video</button>
+            </form>
+            <div style="margin-top: 1rem; display: flex; justify-content: space-between;">
+              <div class="stream-controls">
+                <button class="start-btn">▶️ Start</button>
+                <button class="danger stop-btn">⏹️ Stop</button>
+              </div>
+              <button class="danger clear-btn">Clear Playlist</button>
+            </div>
+          </div>
+        `;
+        card.querySelector('.delete-btn').onclick = () => deleteDestination(dest.id);
+        card.querySelector('.start-btn').onclick = () => startStream(dest.id);
+        card.querySelector('.stop-btn').onclick = () => stopStream(dest.id);
+        card.querySelector('.clear-btn').onclick = () => clearPlaylist(dest.id);
+        attachLinkHandler(card.querySelector('.link-form'));
       }
 
-      card.innerHTML = `
-        <div class="card-header">
-          <h2>${dest.name}</h2>
-          <div style="display: flex; align-items: center; gap: 10px;">
-            <div class="status-light ${dest.isStreaming ? 'active' : ''}"></div>
-            <button class="danger" onclick="deleteDestination('${dest.id}')">Delete</button>
-          </div>
-        </div>
-        <div class="card-body">
-          <strong>Playlist</strong>
-          <ul id="playlist-${dest.id}">${dest.playlist.length > 0 ? dest.playlist.map(f => `<li class="playlist-item">${f}</li>`).join('') : '<li>Empty</li>'}</ul>
-        </div>
-        <div class="card-footer">
-          <form class="upload-form" data-id="${dest.id}">
-            <strong>Upload File</strong>
-            <input type="file" name="video" accept="*/*" multiple required>
-            <div class="progress-container" id="progress-container-${dest.id}" style="display: none; margin: 10px 0;">
-              <div style="background: #eee; border-radius: 5px; overflow: hidden; height: 10px;">
-                <div class="progress-bar" id="progress-bar-${dest.id}" style="width: 0%; height: 100%; background: var(--primary-color); transition: width 0.3s;"></div>
-              </div>
-              <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-top: 5px;">
-                <span class="progress-percent" id="progress-percent-${dest.id}">0%</span>
-                <span class="progress-stats" id="progress-stats-${dest.id}"></span>
-              </div>
-            </div>
-            <button type="submit" ${dest.isStreaming ? 'disabled' : ''}>Upload Video</button>
-          </form>
-          <hr style="margin: 1.5rem 0; border-color: #e9ecef;">
-          <form class="youtube-form" data-id="${dest.id}">
-            <strong>Add from YouTube</strong>
-            <input type="text" name="url" placeholder="https://www.youtube.com/watch?v=..." required>
-            <button type="submit" ${dest.isStreaming ? 'disabled' : ''}>Add From URL</button>
-          </form>
-          <div style="margin-top: 1rem; display: flex; justify-content: space-between;">
-            <div>
-              <button onclick="startStream('${dest.id}')" ${dest.isStreaming ? 'disabled' : ''}>▶️ Start</button>
-              <button class="danger" onclick="stopStream('${dest.id}')" ${!dest.isStreaming ? 'disabled' : ''}>⏹️ Stop</button>
-            </div>
-            <button class="danger" onclick="clearPlaylist('${dest.id}')" ${dest.isStreaming ? 'disabled' : ''}>Clear Playlist</button>
-          </div>
-        </div>
-      `;
+      card.querySelector('.dest-name').textContent = dest.name;
+      card.querySelector('.status-light').className = `status-light ${dest.isStreaming ? 'active' : ''}`;
+      card.querySelector('.start-btn').disabled = dest.isStreaming;
+      card.querySelector('.stop-btn').disabled = !dest.isStreaming;
+      card.querySelector('.clear-btn').disabled = dest.isStreaming;
+      card.querySelector('.link-form button').disabled = dest.isStreaming;
 
-      // Re-attach handlers since we replaced innerHTML
-      attachUploadHandler(card.querySelector('.upload-form'));
-      attachYoutubeHandler(card.querySelector('.youtube-form'));
+      const playlistUl = card.querySelector('.playlist-ul');
+      const newPlaylistHtml = dest.playlist.length > 0 ? dest.playlist.map(f => `<li class="playlist-item">${f}</li>`).join('') : '<li>Empty</li>';
+      if (playlistUl.innerHTML !== newPlaylistHtml) {
+        playlistUl.innerHTML = newPlaylistHtml;
+      }
     }
 
     async function refreshDestinations() {
@@ -236,73 +215,7 @@
       }
     }
 
-    function attachUploadHandler(form) {
-      if (!form) return;
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const id = form.dataset.id;
-        const formData = new FormData(form);
-        const btn = form.querySelector('button');
-        const progressContainer = document.getElementById(`progress-container-${id}`);
-        const progressBar = document.getElementById(`progress-bar-${id}`);
-        const progressPercent = document.getElementById(`progress-percent-${id}`);
-        const progressStats = document.getElementById(`progress-stats-${id}`);
-
-        btn.disabled = true;
-        progressContainer.style.display = 'block';
-        activeUploads.add(id);
-
-        const xhr = new XMLHttpRequest();
-        const startTime = Date.now();
-
-        xhr.upload.addEventListener('progress', (e) => {
-          if (e.lengthComputable) {
-            const percentComplete = (e.loaded / e.total) * 100;
-            progressBar.style.width = percentComplete + '%';
-            progressPercent.textContent = Math.round(percentComplete) + '%';
-
-            const duration = (Date.now() - startTime) / 1000;
-            const bps = e.loaded / duration;
-            const kbps = bps / 1024;
-            const mbps = kbps / 1024;
-
-            const remainingBytes = e.total - e.loaded;
-            const eta = bps > 0 ? remainingBytes / bps : 0;
-
-            let speedText = mbps > 1 ? mbps.toFixed(2) + ' MB/s' : kbps.toFixed(2) + ' KB/s';
-            let etaText = eta > 60 ? Math.floor(eta / 60) + 'm ' + Math.round(eta % 60) + 's' : Math.round(eta) + 's';
-
-            progressStats.textContent = `${speedText} | ETA: ${etaText}`;
-          }
-        });
-
-        xhr.addEventListener('load', () => {
-          activeUploads.delete(id);
-          btn.disabled = false;
-          progressContainer.style.display = 'none';
-
-          if (xhr.status >= 200 && xhr.status < 300) {
-            showToast('Upload successful');
-            form.reset();
-            refreshDestinations();
-          } else {
-            showToast('Upload failed: ' + xhr.responseText, true);
-          }
-        });
-
-        xhr.addEventListener('error', () => {
-          activeUploads.delete(id);
-          btn.disabled = false;
-          progressContainer.style.display = 'none';
-          showToast('Upload failed due to network error', true);
-        });
-
-        xhr.open('POST', `/api/upload/${id}`);
-        xhr.send(formData);
-      });
-    }
-
-    function attachYoutubeHandler(form) {
+    function attachLinkHandler(form) {
       if (!form) return;
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -313,13 +226,14 @@
         btn.disabled = true;
 
         try {
-          const response = await api.post(`/api/youtube/add/${id}`, { url });
-          showToast(await response.text(), !response.ok);
+          const response = await api.post(`/api/file/add/${id}`, { url });
+          const text = await response.text();
+          showToast(text, !response.ok);
           if (response.ok) form.reset();
         } catch (err) {
           showToast('Request failed', true);
         } finally {
-          btn.textContent = 'Add From URL';
+          btn.textContent = 'Get Video';
           btn.disabled = false;
         }
       });
