@@ -309,184 +309,110 @@ async function fetchVideoInfo(yt, videoId) {
 }
 
 /**
- * Initiates a download job on RapidAPI.
- * Tries both /v1 prefix and POST/GET combinations to be robust.
+ * Initiates a download job on RapidAPI (Enterprise flow).
  */
-async function startDownloadJob(url, apiKey, format = 'mp4', quality = "360") {
-  const endpoints = [
-    { url: `https://${RAPIDAPI_HOST}/v1/download`, method: 'POST', body: { url, format, quality } },
-    { url: `https://${RAPIDAPI_HOST}/download`, method: 'POST', body: { url, format, quality } },
-    { url: `https://${RAPIDAPI_HOST}/download?url=${encodeURIComponent(url)}&format=${format}&quality=${quality}`, method: 'GET' }
-  ];
+async function startDownloadJob(url, apiKey, format = 'mp4', quality = 360) {
+  const response = await fetch(`https://${RAPIDAPI_HOST}/v1/download`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-rapidapi-host': RAPIDAPI_HOST,
+      'x-rapidapi-key': apiKey,
+      'User-Agent': RAPIDAPI_USER_AGENT
+    },
+    body: JSON.stringify({ url, format, quality })
+  });
 
-  for (const ep of endpoints) {
-    try {
-      const options = {
-        method: ep.method,
-        headers: {
-          'x-rapidapi-host': RAPIDAPI_HOST,
-          'x-rapidapi-key': apiKey,
-          'User-Agent': RAPIDAPI_USER_AGENT
-        }
-      };
-      if (ep.method === 'POST') {
-        options.headers['Content-Type'] = 'application/json';
-        options.body = JSON.stringify(ep.body);
-      }
-
-      const response = await fetch(ep.url, options);
-      if (response.status === 429) throw new Error('TOO_MANY_REQUESTS');
-      if (response.ok) return await response.json();
-
-      console.log(`[RapidAPI] Endpoint ${ep.url} failed with ${response.status}. Trying next...`);
-    } catch (err) {
-      if (err.message === 'TOO_MANY_REQUESTS') throw err;
-      console.log(`[RapidAPI] Error calling ${ep.url}: ${err.message}`);
-    }
+  if (response.status === 429) throw new Error('TOO_MANY_REQUESTS');
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`RapidAPI initiation failed (${response.status}): ${errorText}`);
   }
-  throw new Error('RapidAPI download initiation failed on all endpoint variations.');
+  return await response.json();
 }
 
 /**
- * Polls the download job status.
+ * Polls the download job status (Enterprise flow).
  */
 async function pollJobStatus(jobId, apiKey) {
-  const maxRetries = 30; // 10 minutes with 20s interval
-  const endpoints = [
-    `https://${RAPIDAPI_HOST}/v1/status?jobId=${jobId}`,
-    `https://${RAPIDAPI_HOST}/status?jobId=${jobId}`,
-    `https://${RAPIDAPI_HOST}/v1/status/${jobId}`,
-    `https://${RAPIDAPI_HOST}/status/${jobId}`
-  ];
-
+  const maxRetries = 15;
   for (let i = 0; i < maxRetries; i++) {
-    let data = null;
-    let lastError = null;
-
-    for (const endpoint of endpoints) {
-      try {
-        const response = await fetch(endpoint, {
-          method: 'GET',
-          headers: {
-            'x-rapidapi-host': RAPIDAPI_HOST,
-            'x-rapidapi-key': apiKey,
-            'User-Agent': RAPIDAPI_USER_AGENT
-          }
-        });
-        if (response.status === 429) throw new Error('TOO_MANY_REQUESTS');
-        if (response.ok) {
-          data = await response.json();
-          break;
-        }
-      } catch (err) {
-        if (err.message === 'TOO_MANY_REQUESTS') throw err;
-        lastError = err.message;
+    const response = await fetch(`https://${RAPIDAPI_HOST}/v1/status/${jobId}`, {
+      method: 'GET',
+      headers: {
+        'x-rapidapi-host': RAPIDAPI_HOST,
+        'x-rapidapi-key': apiKey,
+        'User-Agent': RAPIDAPI_USER_AGENT
       }
-    }
+    });
 
-    if (!data) throw new Error(`RapidAPI status check failed: ${lastError || 'Unknown error'}`);
+    if (response.status === 429) throw new Error('TOO_MANY_REQUESTS');
+    if (!response.ok) throw new Error(`RapidAPI status check failed: ${response.statusText}`);
 
+    const data = await response.json();
     if (data.status === 'completed') return data;
     if (data.status === 'error' || data.error) {
       throw new Error(`RapidAPI job error: ${data.message || data.error || 'Unknown error'}`);
     }
 
     console.log(`[RapidAPI] Job ${jobId} status: ${data.status} (${data.progress || '0%'})`);
-    await new Promise(resolve => setTimeout(resolve, 20000));
+    await new Promise(resolve => setTimeout(resolve, 7000)); // 7s interval as per instructions
   }
   throw new Error('RapidAPI job timed out.');
 }
 
 /**
- * Downloads the processed file from RapidAPI.
+ * Downloads the processed file from RapidAPI (Enterprise flow).
  */
 async function downloadFinalFile(jobId, filename, outputPath, apiKey) {
-  const endpoints = [
-    `https://${RAPIDAPI_HOST}/v1/file?jobId=${jobId}`,
-    `https://${RAPIDAPI_HOST}/file?jobId=${jobId}`,
-    `https://${RAPIDAPI_HOST}/v1/file/${jobId}/${encodeURIComponent(filename)}`,
-    `https://${RAPIDAPI_HOST}/file/${jobId}/${encodeURIComponent(filename)}`
-  ];
-
-  for (const endpoint of endpoints) {
-    try {
-      const response = await fetch(endpoint, {
-        method: 'GET',
-        headers: {
-          'x-rapidapi-host': RAPIDAPI_HOST,
-          'x-rapidapi-key': apiKey,
-          'User-Agent': RAPIDAPI_USER_AGENT
-        }
-      });
-      if (response.status === 429) throw new Error('TOO_MANY_REQUESTS');
-      if (response.ok) {
-        const fileStream = fs.createWriteStream(outputPath);
-        const reader = Readable.fromWeb(response.body);
-        reader.pipe(fileStream);
-        return new Promise((resolve, reject) => {
-          fileStream.on('finish', resolve);
-          fileStream.on('error', reject);
-        });
-      }
-    } catch (err) {
-      if (err.message === 'TOO_MANY_REQUESTS') throw err;
+  // Use /v1/file/{jobId}/video.mp4 as per instructions
+  const response = await fetch(`https://${RAPIDAPI_HOST}/v1/file/${jobId}/video.mp4`, {
+    method: 'GET',
+    headers: {
+      'x-rapidapi-host': RAPIDAPI_HOST,
+      'x-rapidapi-key': apiKey,
+      'User-Agent': RAPIDAPI_USER_AGENT
     }
-  }
-  throw new Error('RapidAPI file fetch failed on all endpoint variations.');
+  });
+
+  if (response.status === 429) throw new Error('TOO_MANY_REQUESTS');
+  if (!response.ok) throw new Error(`RapidAPI file fetch failed: ${response.statusText}`);
+
+  const fileStream = fs.createWriteStream(outputPath);
+  const reader = Readable.fromWeb(response.body);
+  reader.pipe(fileStream);
+
+  return new Promise((resolve, reject) => {
+    fileStream.on('finish', resolve);
+    fileStream.on('error', reject);
+  });
 }
 
 /**
- * Orchestrates the video download process using RapidAPI with fallback and key rotation.
+ * Orchestrates the video download process (Simplified for Enterprise Rules).
  */
 const downloadVideo = async (destId, yt, videoId, destDir, format = 'mp4', requestedQuality = 360) => {
-  let attempts = 0;
-  const maxAttempts = RAPIDAPI_KEYS.length;
-  // User wants 360p by default. Fallback to 480/720 only if 360 fails with 403 (Forbidden).
-  const qualitiesToTry = [360, 480, 720];
+  // Stick to one key primarily as per user instruction (IP based limits)
+  const keyObj = await keyManager.getAvailableKey(destId);
+  const quality = 360; // Single quality, no fallback loop
 
-  while (attempts < maxAttempts) {
-    const keyObj = await keyManager.getAvailableKey(destId);
-    try {
-      for (const quality of qualitiesToTry) {
-        try {
-          const state = channelStates.get(destId);
-          if (state && state.nowDownloading) state.nowDownloading.quality = `${quality}p`;
-          addLog(destId, `[RapidAPI] Attempting download: ${videoId} (${quality}p)`);
-          await downloadVideoInternal(destId, yt, videoId, destDir, format, quality, keyObj);
-          return; // Success!
-        } catch (err) {
-          // If 403 Forbidden or "empty file" or "Bad Request", try next quality
-          if (err.message.includes('403') || err.message.includes('Forbidden') || err.message.includes('empty') || err.message.includes('400')) {
-            addLog(destId, `[RapidAPI] ${quality}p failed (${err.message}). Trying next quality...`);
-            continue;
-          }
-          // If rate limited, switch key
-          if (err.message === 'TOO_MANY_REQUESTS' || err.message.includes('429')) {
-            throw err;
-          }
-          // For other errors, log and potentially try next quality or switch key
-          addLog(destId, `[RapidAPI] Error with ${quality}p: ${err.message}`);
-          if (quality === qualitiesToTry[qualitiesToTry.length - 1]) throw err; // Last quality failed
-        }
-      }
-    } catch (err) {
-      if (err.message === 'TOO_MANY_REQUESTS') {
-        addLog(destId, `[RateLimit] Key ${keyObj.value.substring(0, 8)}... reported 429. Switching key.`);
-        keyManager.markRateLimited(keyObj);
-        attempts++;
-        continue;
-      }
-      // For general failures, also try switching key to be safe
-      addLog(destId, `[Error] Key ${keyObj.value.substring(0, 8)}... failed. Switching key.`);
-      attempts++;
-      continue;
+  try {
+    const state = channelStates.get(destId);
+    if (state && state.nowDownloading) state.nowDownloading.quality = `${quality}p`;
+    addLog(destId, `[RapidAPI] Attempting download: ${videoId} (${quality}p)`);
+    await downloadVideoInternal(destId, yt, videoId, destDir, format, quality, keyObj);
+  } catch (err) {
+    if (err.message === 'TOO_MANY_REQUESTS' || err.message.includes('429')) {
+      addLog(destId, `[RateLimit] IP or Key reported 429. User-Agent/IP likely flagged.`);
+      // Still mark key as limited to let cooldown happen
+      keyManager.markRateLimited(keyObj);
     }
+    throw err;
   }
-  throw new Error('All API keys exhausted or failed to download video.');
 };
 
 /**
- * Internal orchestrator for RapidAPI download.
+ * Internal orchestrator for RapidAPI download (Enterprise flow).
  */
 const downloadVideoInternal = async (destId, yt, videoId, destDir, format, quality, keyObj) => {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
@@ -497,57 +423,17 @@ const downloadVideoInternal = async (destId, yt, videoId, destDir, format, quali
     const filename = `${title}.${format}`;
     const outputPath = path.join(destDir, filename);
 
-    // Add small burst protection delay
-    await new Promise(r => setTimeout(r, 2000));
+    // Initial request
+    const job = await startDownloadJob(url, apiKey, format, quality);
 
-    const job = await startDownloadJob(url, apiKey, format, String(quality));
-
-    if (job.directDownload && job.downloadUrl) {
-      console.log(`[RapidAPI] Direct download available: ${job.downloadUrl}`);
-      // Try fetching direct link
-      const response = await fetch(job.downloadUrl, {
-        headers: { 'User-Agent': RAPIDAPI_USER_AGENT }
-      });
-
-      if (!response.ok) {
-        throw new Error(`Direct download failed: ${response.status} ${response.statusText}`);
-      }
-
-      const fileStream = fs.createWriteStream(outputPath);
-      const reader = Readable.fromWeb(response.body);
-      reader.pipe(fileStream);
-      await new Promise((resolve, reject) => {
-        fileStream.on('finish', resolve);
-        fileStream.on('error', reject);
-      });
-    } else if (job.jobId) {
+    if (job.jobId) {
       addLog(destId, `[RapidAPI] Job initiated: ${job.jobId}. Polling...`);
       const completedJob = await pollJobStatus(job.jobId, apiKey);
 
-      let downloadUrl = completedJob.downloadUrl;
-      // Ensure downloadUrl is absolute for the file fetch
-      if (downloadUrl && !downloadUrl.startsWith('http')) {
-          downloadUrl = `https://${RAPIDAPI_HOST}${downloadUrl}`;
-      }
-
-      const headers = { 'User-Agent': RAPIDAPI_USER_AGENT };
-      if (downloadUrl.includes(RAPIDAPI_HOST) || downloadUrl.includes('youtubedownloadapi.com')) {
-        headers['x-rapidapi-key'] = apiKey;
-        headers['x-rapidapi-host'] = RAPIDAPI_HOST;
-      }
-
-      const response = await fetch(downloadUrl, { headers });
-      if (!response.ok) throw new Error(`File fetch failed: ${response.statusText}`);
-
-      const fileStream = fs.createWriteStream(outputPath);
-      const reader = Readable.fromWeb(response.body);
-      reader.pipe(fileStream);
-      await new Promise((resolve, reject) => {
-        fileStream.on('finish', resolve);
-        fileStream.on('error', reject);
-      });
+      // Always use the /file endpoint, never direct googlevideo links
+      await downloadFinalFile(job.jobId, filename, outputPath, apiKey);
     } else {
-        throw new Error('No jobId or downloadUrl returned from API.');
+        throw new Error('No jobId returned from API.');
     }
 
     addLog(destId, `[RapidAPI] Success: ${filename}`);
@@ -657,6 +543,11 @@ const runChannelLoop = async (destId) => {
       saveDestinations();
 
       if (!dest.isActive) break;
+
+      // Smart Queue: Wait 30 seconds before next video to avoid IP bans
+      addLog(destId, `[Queue] Waiting 30s before moving to next video...`);
+      await new Promise(r => setTimeout(r, 30000));
+
       addLog(destId, `[Loop] Moving to next video...`);
     }
   } catch (err) {
