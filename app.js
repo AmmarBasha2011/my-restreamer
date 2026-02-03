@@ -95,9 +95,10 @@ saveDestinations();
 
 // --- API: Per-Destination Playlist Actions ---
 
-app.post('/api/upload/:id', upload.single('video'), (req, res) => {
-  if (!req.file) return res.status(400).send('No file uploaded.');
-  res.json({ success: true, message: `Video '${req.file.originalname}' uploaded.` });
+app.post('/api/upload/:id', upload.array('video'), (req, res) => {
+  if (!req.files || req.files.length === 0) return res.status(400).send('No files uploaded.');
+  const filenames = req.files.map(f => f.originalname).join(', ');
+  res.json({ success: true, message: `Videos [${filenames}] uploaded.` });
 });
 
 app.post('/api/playlist/clear/:id', (req, res) => {

@@ -25,6 +25,7 @@
     .playlist-item { display: flex; justify-content: space-between; align-items: center; background: #f1f3f5; padding: 0.5rem 1rem; border-radius: 4px; margin-bottom: 0.5rem; font-size: 0.9rem; }
     .status-light { height: 12px; width: 12px; background-color: var(--gray); border-radius: 50%; transition: background-color 0.5s; }
     .status-light.active { background-color: #28a745; box-shadow: 0 0 8px #28a745; }
+    .progress-stats { color: var(--gray); font-variant-numeric: tabular-nums; }
     #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #333; color: #fff; padding: 1rem 2rem; border-radius: 5px; opacity: 0; visibility: hidden; transition: opacity 0.5s, visibility 0.5s; z-index: 1000; }
     #toast.show { opacity: 1; visibility: visible; }
 
@@ -101,10 +102,37 @@
       delete: (endpoint) => fetch(endpoint, { method: 'DELETE' })
     };
 
+    const activeUploads = new Set();
+
     function createChannelCard(dest) {
       const card = document.createElement('div');
       card.className = 'card';
       card.id = `dest-${dest.id}`;
+      updateCardContent(card, dest);
+      return card;
+    }
+
+    function updateCardContent(card, dest) {
+      const isUploading = activeUploads.has(dest.id);
+
+      // If uploading or user has selected a file, don't overwrite the form/footer
+      const uploadInput = card.querySelector('input[name="video"]');
+      const youtubeInput = card.querySelector('input[name="url"]');
+      const hasFile = uploadInput && uploadInput.files.length > 0;
+      const hasYoutubeUrl = youtubeInput && youtubeInput.value.length > 0;
+
+      if (card.innerHTML && (isUploading || hasFile || hasYoutubeUrl)) {
+        // Only update the playlist and status light if we are "busy"
+        const statusLight = card.querySelector('.status-light');
+        if (statusLight) statusLight.className = `status-light ${dest.isStreaming ? 'active' : ''}`;
+
+        const playlistUl = card.querySelector(`#playlist-${dest.id}`);
+        if (playlistUl) {
+          playlistUl.innerHTML = dest.playlist.length > 0 ? dest.playlist.map(f => `<li class="playlist-item">${f}</li>`).join('') : '<li>Empty</li>';
+        }
+        return;
+      }
+
       card.innerHTML = `
         <div class="card-header">
           <h2>${dest.name}</h2>
@@ -120,7 +148,16 @@
         <div class="card-footer">
           <form class="upload-form" data-id="${dest.id}">
             <strong>Upload File</strong>
-            <input type="file" name="video" accept="video/*" required>
+            <input type="file" name="video" accept="video/*" multiple required>
+            <div class="progress-container" id="progress-container-${dest.id}" style="display: none; margin: 10px 0;">
+              <div style="background: #eee; border-radius: 5px; overflow: hidden; height: 10px;">
+                <div class="progress-bar" id="progress-bar-${dest.id}" style="width: 0%; height: 100%; background: var(--primary-color); transition: width 0.3s;"></div>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-top: 5px;">
+                <span class="progress-percent" id="progress-percent-${dest.id}">0%</span>
+                <span class="progress-stats" id="progress-stats-${dest.id}"></span>
+              </div>
+            </div>
             <button type="submit" ${dest.isStreaming ? 'disabled' : ''}>Upload Video</button>
           </form>
           <hr style="margin: 1.5rem 0; border-color: #e9ecef;">
@@ -138,62 +175,124 @@
           </div>
         </div>
       `;
-      return card;
+
+      // Re-attach handlers since we replaced innerHTML
+      attachUploadHandler(card.querySelector('.upload-form'));
+      attachYoutubeHandler(card.querySelector('.youtube-form'));
     }
 
     async function refreshDestinations() {
       try {
         const destinations = await api.get('/api/destinations');
-        grid.innerHTML = ''; // Clear grid
-        destinations.forEach(dest => grid.appendChild(createChannelCard(dest)));
-        attachUploadHandlers();
-        attachYoutubeHandlers();
+
+        // Remove cards that are no longer present
+        const destIds = new Set(destinations.map(d => d.id));
+        Array.from(grid.children).forEach(card => {
+          const id = card.id.replace('dest-', '');
+          if (!destIds.has(id)) grid.removeChild(card);
+        });
+
+        destinations.forEach(dest => {
+          let card = document.getElementById(`dest-${dest.id}`);
+          if (!card) {
+            card = createChannelCard(dest);
+            grid.appendChild(card);
+          } else {
+            updateCardContent(card, dest);
+          }
+        });
       } catch (err) {
+        console.error(err);
         showToast('Error fetching data.', true);
       }
     }
 
-    function attachUploadHandlers() {
-      document.querySelectorAll('.upload-form').forEach(form => {
-        form.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const id = form.dataset.id;
-          const formData = new FormData(form);
-          const btn = form.querySelector('button');
-          btn.textContent = 'Uploading...';
-          btn.disabled = true;
-          const response = await fetch(`/api/upload/${id}`, { method: 'POST', body: formData });
-          showToast(await response.text(), !response.ok);
-          btn.textContent = 'Upload Video';
-          btn.disabled = false;
-          if (response.ok) {
-            form.reset();
-            refreshDestinations();
+    function attachUploadHandler(form) {
+      if (!form) return;
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = form.dataset.id;
+        const formData = new FormData(form);
+        const btn = form.querySelector('button');
+        const progressContainer = document.getElementById(`progress-container-${id}`);
+        const progressBar = document.getElementById(`progress-bar-${id}`);
+        const progressPercent = document.getElementById(`progress-percent-${id}`);
+        const progressStats = document.getElementById(`progress-stats-${id}`);
+
+        btn.disabled = true;
+        progressContainer.style.display = 'block';
+        activeUploads.add(id);
+
+        const xhr = new XMLHttpRequest();
+        const startTime = Date.now();
+
+        xhr.upload.addEventListener('progress', (e) => {
+          if (e.lengthComputable) {
+            const percentComplete = (e.loaded / e.total) * 100;
+            progressBar.style.width = percentComplete + '%';
+            progressPercent.textContent = Math.round(percentComplete) + '%';
+
+            const duration = (Date.now() - startTime) / 1000;
+            const bps = e.loaded / duration;
+            const kbps = bps / 1024;
+            const mbps = kbps / 1024;
+
+            const remainingBytes = e.total - e.loaded;
+            const eta = bps > 0 ? remainingBytes / bps : 0;
+
+            let speedText = mbps > 1 ? mbps.toFixed(2) + ' MB/s' : kbps.toFixed(2) + ' KB/s';
+            let etaText = eta > 60 ? Math.floor(eta / 60) + 'm ' + Math.round(eta % 60) + 's' : Math.round(eta) + 's';
+
+            progressStats.textContent = `${speedText} | ETA: ${etaText}`;
           }
         });
+
+        xhr.addEventListener('load', () => {
+          activeUploads.delete(id);
+          btn.disabled = false;
+          progressContainer.style.display = 'none';
+
+          if (xhr.status >= 200 && xhr.status < 300) {
+            showToast('Upload successful');
+            form.reset();
+            refreshDestinations();
+          } else {
+            showToast('Upload failed: ' + xhr.responseText, true);
+          }
+        });
+
+        xhr.addEventListener('error', () => {
+          activeUploads.delete(id);
+          btn.disabled = false;
+          progressContainer.style.display = 'none';
+          showToast('Upload failed due to network error', true);
+        });
+
+        xhr.open('POST', `/api/upload/${id}`);
+        xhr.send(formData);
       });
     }
 
-    function attachYoutubeHandlers() {
-      document.querySelectorAll('.youtube-form').forEach(form => {
-        form.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const id = form.dataset.id;
-          const url = form.querySelector('input[name="url"]').value;
-          const btn = form.querySelector('button');
-          btn.textContent = 'Downloading...';
-          btn.disabled = true;
+    function attachYoutubeHandler(form) {
+      if (!form) return;
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = form.dataset.id;
+        const url = form.querySelector('input[name="url"]').value;
+        const btn = form.querySelector('button');
+        btn.textContent = 'Downloading...';
+        btn.disabled = true;
 
+        try {
           const response = await api.post(`/api/youtube/add/${id}`, { url });
           showToast(await response.text(), !response.ok);
-          
+          if (response.ok) form.reset();
+        } catch (err) {
+          showToast('Request failed', true);
+        } finally {
           btn.textContent = 'Add From URL';
           btn.disabled = false;
-          if (response.ok) {
-            form.reset();
-            // No need to refresh here, the periodic refresh will catch it
-          }
-        });
+        }
       });
     }
 
@@ -204,8 +303,12 @@
       if (!key) return;
 
       const response = await api.post('/api/destinations', { name, key });
-      showToast(await response.text(), !response.ok);
-      if (response.ok) refreshDestinations();
+      if (response.ok) {
+        showToast('Channel added successfully');
+        refreshDestinations();
+      } else {
+        showToast('Failed to add channel: ' + await response.text(), true);
+      }
     });
 
     window.deleteDestination = async (id) => {
