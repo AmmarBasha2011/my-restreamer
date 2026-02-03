@@ -154,10 +154,10 @@
             <ul class="playlist-ul" id="playlist-${dest.id}"></ul>
           </div>
           <div class="card-footer">
-            <form class="link-form" data-id="${dest.id}">
-              <strong>Get file by link</strong>
-              <input type="text" name="url" placeholder="https://raw.githubusercontent.com/..." required>
-              <button type="submit">Get Video</button>
+            <form class="repo-form" data-id="${dest.id}">
+              <strong>Git Repository Sync</strong>
+              <input type="text" name="repoUrl" placeholder="https://github.com/..." required>
+              <button type="submit">Sync Repo</button>
             </form>
             <div style="margin-top: 1rem; display: flex; justify-content: space-between;">
               <div class="stream-controls">
@@ -172,7 +172,7 @@
         card.querySelector('.start-btn').onclick = () => startStream(dest.id);
         card.querySelector('.stop-btn').onclick = () => stopStream(dest.id);
         card.querySelector('.clear-btn').onclick = () => clearPlaylist(dest.id);
-        attachLinkHandler(card.querySelector('.link-form'));
+        attachRepoHandler(card.querySelector('.repo-form'));
       }
 
       card.querySelector('.dest-name').textContent = dest.name;
@@ -180,7 +180,12 @@
       card.querySelector('.start-btn').disabled = dest.isStreaming;
       card.querySelector('.stop-btn').disabled = !dest.isStreaming;
       card.querySelector('.clear-btn').disabled = dest.isStreaming;
-      card.querySelector('.link-form button').disabled = dest.isStreaming;
+      card.querySelector('.repo-form button').disabled = dest.isStreaming;
+
+      const repoInput = card.querySelector('.repo-form input[name="repoUrl"]');
+      if (document.activeElement !== repoInput && dest.repoUrl && repoInput.value !== dest.repoUrl) {
+        repoInput.value = dest.repoUrl;
+      }
 
       const playlistUl = card.querySelector('.playlist-ul');
       const newPlaylistHtml = dest.playlist.length > 0 ? dest.playlist.map(f => `<li class="playlist-item">${f}</li>`).join('') : '<li>Empty</li>';
@@ -215,25 +220,24 @@
       }
     }
 
-    function attachLinkHandler(form) {
+    function attachRepoHandler(form) {
       if (!form) return;
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const id = form.dataset.id;
-        const url = form.querySelector('input[name="url"]').value;
+        const repoUrl = form.querySelector('input[name="repoUrl"]').value;
         const btn = form.querySelector('button');
-        btn.textContent = 'Downloading...';
+        btn.textContent = 'Syncing...';
         btn.disabled = true;
 
         try {
-          const response = await api.post(`/api/file/add/${id}`, { url });
+          const response = await api.post(`/api/destinations/${id}/repo`, { repoUrl });
           const text = await response.text();
           showToast(text, !response.ok);
-          if (response.ok) form.reset();
         } catch (err) {
           showToast('Request failed', true);
         } finally {
-          btn.textContent = 'Get Video';
+          btn.textContent = 'Sync Repo';
           btn.disabled = false;
         }
       });

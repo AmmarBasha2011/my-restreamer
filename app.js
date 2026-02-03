@@ -5,6 +5,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 const app = express();
+const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.mov', '.avi', '.flv', '.wmv'];
 const PORT = process.env.PORT || 3000;
 
 // --- FILE PATHS ---
@@ -32,6 +33,98 @@ const saveDestinations = () => {
   fs.writeFileSync(DESTINATIONS_FILE, JSON.stringify(destinations, null, 2));
 };
 
+const syncRepo = async (id) => {
+  const dest = destinations.find(d => d.id === id);
+  if (!dest || !dest.repoUrl) return;
+
+  const destDir = path.join(PLAYLISTS_DIR, id);
+  const repoDir = path.join(destDir, '.repo');
+
+  try {
+    if (!fs.existsSync(repoDir)) {
+      console.log(`[Sync] Cloning repo for ${dest.name}: ${dest.repoUrl}`);
+      await new Promise((resolve, reject) => {
+        const git = spawn('git', ['clone', '--depth', '1', dest.repoUrl, repoDir]);
+        git.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Git clone failed with code ${code}`)));
+      });
+    } else {
+      console.log(`[Sync] Pulling updates for ${dest.name}`);
+      await new Promise((resolve, reject) => {
+        const git = spawn('git', ['-C', repoDir, 'pull']);
+        git.on('close', (code) => code === 0 ? resolve() : reject(new Error(`Git pull failed with code ${code}`)));
+      });
+    }
+
+    const findVideos = async (dir, fileList = []) => {
+      const files = await fs.promises.readdir(dir);
+      for (const file of files) {
+        const filePath = path.join(dir, file);
+        const stats = await fs.promises.stat(filePath);
+        if (stats.isDirectory()) {
+          if (file !== '.git') await findVideos(filePath, fileList);
+        } else {
+          if (VIDEO_EXTENSIONS.includes(path.extname(file).toLowerCase())) {
+            fileList.push(filePath);
+          }
+        }
+      }
+      return fileList;
+    };
+
+    const videosInRepo = await findVideos(repoDir);
+    const videoFilenamesInRepo = videosInRepo.map(v => path.basename(v));
+
+    for (const videoPath of videosInRepo) {
+      const filename = path.basename(videoPath);
+      const targetPath = path.join(destDir, filename);
+
+      const statsRepo = await fs.promises.stat(videoPath);
+      let shouldCopy = true;
+      if (fs.existsSync(targetPath)) {
+        const statsTarget = await fs.promises.stat(targetPath);
+        // Compare size and mtime (with 1s tolerance for some filesystems)
+        if (statsRepo.size === statsTarget.size && Math.abs(statsRepo.mtime.getTime() - statsTarget.mtime.getTime()) < 1000) {
+          shouldCopy = false;
+        }
+      }
+
+      if (shouldCopy) {
+        await fs.promises.copyFile(videoPath, targetPath);
+        console.log(`[Sync] Syncing video: ${filename}`);
+      }
+    }
+
+    const filesInDest = await fs.promises.readdir(destDir);
+    for (const file of filesInDest) {
+      const filePath = path.join(destDir, file);
+      const stats = await fs.promises.stat(filePath);
+      if (stats.isDirectory()) continue;
+      if (file === 'playlist.txt') continue;
+
+      const isVideo = VIDEO_EXTENSIONS.includes(path.extname(file).toLowerCase());
+      if (isVideo) {
+        if (!videoFilenamesInRepo.includes(file)) {
+          await fs.promises.unlink(filePath);
+          console.log(`[Sync] Removed old video: ${file}`);
+        }
+      } else {
+        // Delete any non-video file from playlist dir (as requested)
+        await fs.promises.unlink(filePath);
+        console.log(`[Sync] Removed non-video file: ${file}`);
+      }
+    }
+  } catch (err) {
+    console.error(`[Sync] Error syncing repo for ${dest.name}:`, err.message);
+  }
+};
+
+setInterval(() => {
+  console.log('[Sync] Starting periodic sync for all repos...');
+  destinations.forEach(dest => {
+    if (dest.repoUrl) syncRepo(dest.id);
+  });
+}, 20 * 60 * 1000);
+
 // --- MIDDLEWARE ---
 app.use(express.json());
 app.use(express.static('public'));
@@ -42,7 +135,7 @@ app.use(express.static('public'));
 app.get('/api/destinations', (req, res) => {
   const fullDestinations = destinations.map(dest => {
     const destDir = path.join(PLAYLISTS_DIR, dest.id);
-    const videos = fs.existsSync(destDir) ? fs.readdirSync(destDir).filter(f => !f.startsWith('.') && f !== 'playlist.txt') : [];
+    const videos = fs.existsSync(destDir) ? fs.readdirSync(destDir).filter(f => !f.startsWith('.') && f !== 'playlist.txt' && !fs.statSync(path.join(destDir, f)).isDirectory()) : [];
     return { ...dest, playlist: videos, isStreaming: activeStreams.has(dest.id) };
   });
   res.json(fullDestinations);
@@ -80,48 +173,22 @@ saveDestinations();
 
 // --- API: Per-Destination Playlist Actions ---
 
-app.post('/api/file/add/:id', (req, res) => {
+app.post('/api/destinations/:id/repo', async (req, res) => {
   const { id } = req.params;
-  const { url } = req.body;
+  const { repoUrl } = req.body;
 
-  if (!url) return res.status(400).send('URL is required.');
-  if (!url.startsWith('http://') && !url.startsWith('https://')) {
-    return res.status(400).send('Invalid URL protocol. Only http and https are supported.');
-  }
+  if (!repoUrl) return res.status(400).send('Repository URL is required.');
 
-  const destDir = path.join(PLAYLISTS_DIR, id);
-  if (!fs.existsSync(destDir)) return res.status(404).send('Destination not found.');
+  const dest = destinations.find(d => d.id === id);
+  if (!dest) return res.status(404).send('Destination not found.');
 
-  let filename;
-  let encodedUrl;
-  try {
-    const parsedUrl = new URL(url);
-    encodedUrl = parsedUrl.href;
-    filename = decodeURIComponent(path.basename(parsedUrl.pathname)).replace(/['<>:"/\\|?*]/g, '_');
-    if (!filename || filename === '_') {
-       filename = 'video_' + Date.now() + '.mp4';
-    }
-  } catch (e) {
-    return res.status(400).send('Invalid URL.');
-  }
+  dest.repoUrl = repoUrl;
+  saveDestinations();
 
-  const outputPath = path.join(destDir, filename);
-  console.log(`[API] Starting download: ${encodedUrl} -> ${outputPath}`);
+  res.status(202).send('Repository URL updated. Sync started in background.');
 
-  // Send immediate response to avoid timeouts
-  res.status(202).send(`Download started for '${filename}'. It will appear in the playlist shortly.`);
-
-  const curlProcess = spawn('curl', ['-fL', '-o', outputPath, encodedUrl]);
-
-  curlProcess.on('close', (code) => {
-    if (code === 0) {
-      console.log(`[API] Download complete: ${filename}`);
-    } else {
-      console.error(`[API] Download failed with code ${code} for URL: ${url}`);
-      // Clean up partial file if any
-      if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-    }
-  });
+  // Trigger immediate sync
+  syncRepo(id);
 });
 
 app.post('/api/playlist/clear/:id', (req, res) => {
