@@ -123,31 +123,23 @@ app.post('/api/youtube/add/:id', (req, res) => {
   const destDir = path.join(PLAYLISTS_DIR, id);
   if (!fs.existsSync(destDir)) return res.status(404).send('Destination not found.');
 
-  const COOKIE_FILE = path.join(__dirname, 'www.youtube.com_cookies.txt');
-
-const ytdlpArgs = [
+  // بناء الإعدادات النظيفة تماماً بدون كوكيز وبدون OAuth تالف
+  const ytdlpArgs = [
     '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', 
     '-o', path.join(destDir, '%(title)s.%(ext)s'), 
     
-    // --- استخدام تفعيل التلفاز الرسمي لمنع انتهاء الجلسة ---
-    '--username', 'oauth2',
-    '--password', '',
-    '--cache-dir', path.join(__dirname, '.yt-dlp-cache'), // حفظ الرموز محلياً لتجديدها تلقائياً
+    // إجبار الأداة على استخدام مشغل أندرويد للهواتف (Android client لا يطلب كوكيز أو فحص بوتات للروابط العامة)
+    '--extractor-args', 'youtube:player-client=android',
+    '--user-agent', 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
     
-    '--extractor-args', 'youtube:player-client=tv', // عميل التلفاز هو الأكثر استقراراً مع الـ OAuth
+    // إعدادات إضافية لتفادي الحظر الأمني للسيرفرات
     '--no-check-certificates',
     '--geo-bypass',
-    '--sleep-requests', '1'
+    '--sleep-requests', '1.5',
+    '--no-warnings'
   ];
 
-  if (fs.existsSync(COOKIE_FILE)) {
-    console.log('[yt-dlp] Found cookies file. Adding it to arguments.');
-    ytdlpArgs.push('--cookies', COOKIE_FILE);
-  }
-
-  ytdlpArgs.push(url);
-
-  console.log(`[yt-dlp] Starting download with args: ${ytdlpArgs.join(' ')}`);
+  console.log(`[yt-dlp] Starting 100% clean download with args: ${ytdlpArgs.join(' ')}`);
   const ytdlpProcess = spawn('yt-dlp', ytdlpArgs);
 
   ytdlpProcess.stdout.on('data', (data) => {
