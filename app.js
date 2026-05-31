@@ -126,16 +126,18 @@ app.post('/api/youtube/add/:id', (req, res) => {
   const COOKIE_FILE = path.join(__dirname, 'www.youtube.com_cookies.txt');
 
 const ytdlpArgs = [
-    '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-    '-o', path.join(destDir, '%(title)s.%(ext)s'),
+    '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', 
+    '-o', path.join(destDir, '%(title)s.%(ext)s'), 
     
-    // --- إعدادات تخطي الحظر بدون كوكيز ---
-    '--extractor-args', 'youtube:player-client=web,ios', // خداع يوتيوب بأن الطلب قادم من متصفح ويب أو تطبيق iOS
-    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', // استخدام متصفح حديث ومشهور
-    '--no-check-certificates', // تخطي فحص شهادات الأمان لتسريع الاتصال
-    '--prefer-insecure', // تفضيل الاتصالات المباشرة غير المشفرة إذا كانت تمنع الحظر
-    '--geo-bypass', // تخطي الحظر الجغرافي القائم على موقع السيرفر
-    '--sleep-requests', '1', // عمل فاصل زمني ثانية واحدة بين الطلبات لتجنب كشف السيرفر كـ Bot
+    // --- استخدام تفعيل التلفاز الرسمي لمنع انتهاء الجلسة ---
+    '--username', 'oauth2',
+    '--password', '',
+    '--cache-dir', path.join(__dirname, '.yt-dlp-cache'), // حفظ الرموز محلياً لتجديدها تلقائياً
+    
+    '--extractor-args', 'youtube:player-client=tv', // عميل التلفاز هو الأكثر استقراراً مع الـ OAuth
+    '--no-check-certificates',
+    '--geo-bypass',
+    '--sleep-requests', '1'
   ];
 
   if (fs.existsSync(COOKIE_FILE)) {
