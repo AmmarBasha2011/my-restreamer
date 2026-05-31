@@ -17,7 +17,9 @@ if (!fs.existsSync(PLAYLISTS_DIR)) fs.mkdirSync(PLAYLISTS_DIR);
 if (!fs.existsSync(DESTINATIONS_FILE)) fs.writeFileSync(DESTINATIONS_FILE, '[]');
 
 let destinations = JSON.parse(fs.readFileSync(DESTINATIONS_FILE, 'utf-8'));
-const activeStreams = new Map(); // K: destinationId, V: ffmpegProcess
+
+// لتخزين مرجع العمليات النشطة ومعلومات تتبع الفيديوهات لكل قناة بث
+const activeStreams = new Map(); // K: destinationId, V: { process, currentTrackIndex, isManuallyStopped }
 
 // Self-healing: Ensure playlist directories exist for all known destinations on startup
 destinations.forEach(dest => {
@@ -73,7 +75,7 @@ app.post('/api/destinations', (req, res) => {
   // Create a dedicated directory for this destination's playlist
   fs.mkdirSync(path.join(PLAYLISTS_DIR, newDestination.id));
   
-saveDestinations();
+  saveDestinations();
   res.status(201).json(newDestination);
 });
 
@@ -89,7 +91,7 @@ app.delete('/api/destinations/:id', (req, res) => {
     fs.rmSync(destDir, { recursive: true, force: true });
   }
   
-saveDestinations();
+  saveDestinations();
   res.status(200).send('Destination and its playlist deleted.');
 });
 
@@ -123,35 +125,23 @@ app.post('/api/youtube/add/:id', (req, res) => {
   const destDir = path.join(PLAYLISTS_DIR, id);
   if (!fs.existsSync(destDir)) return res.status(404).send('Destination not found.');
 
-  // بناء الإعدادات النظيفة تماماً مع إضافة الرابط في النهاية
   const ytdlpArgs = [
     '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', 
     '-o', path.join(destDir, '%(title)s.%(ext)s'), 
-    
-    // إستراتيجية عميل الأندرويد لتفادي قيود السيرفرات السحابية
     '--extractor-args', 'youtube:player-client=android',
     '--user-agent', 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
-    
-    // إعدادات الأمان والتخطي
     '--no-check-certificates',
     '--geo-bypass',
     '--sleep-requests', '1.5',
     '--no-warnings',
-    
-    // إدخال رابط الفيديو هنا كعنصر أساسي في المصفوفة لتقرأه الأداة بنجاح
     url 
   ];
 
-  console.log(`[yt-dlp] Starting 100% clean download with args: ${ytdlpArgs.join(' ')}`);
+  console.log(`[yt-dlp] Starting clean download with args: ${ytdlpArgs.join(' ')}`);
   const ytdlpProcess = spawn('yt-dlp', ytdlpArgs);
 
-  ytdlpProcess.stdout.on('data', (data) => {
-    console.log(`[yt-dlp] stdout: ${data}`);
-  });
-
-  ytdlpProcess.stderr.on('data', (data) => {
-    console.error(`[yt-dlp] stderr: ${data}`);
-  });
+  ytdlpProcess.stdout.on('data', (data) => console.log(`[yt-dlp] stdout: ${data}`));
+  ytdlpProcess.stderr.on('data', (data) => console.error(`[yt-dlp] stderr: ${data}`));
 
   ytdlpProcess.on('close', (code) => {
     if (code === 0) {
@@ -164,6 +154,95 @@ app.post('/api/youtube/add/:id', (req, res) => {
   res.status(202).send('Download started. The video will be added to the playlist shortly.');
 });
 
+// دالة التشغيل الذكية التي تبث ملفاً تلو الآخر وتتعافى تلقائياً عند الأخطاء
+function runDynamicStream(id, trackIndex = 0) {
+  const dest = destinations.find(d => d.id === id);
+  if (!dest) return;
+
+  const destDir = path.join(PLAYLISTS_DIR, id);
+  if (!fs.existsSync(destDir)) return;
+
+  const videoFiles = fs.readdirSync(destDir).filter(f => !f.startsWith('.'));
+  if (videoFiles.length === 0) {
+    console.log(`[${dest.name}] القائمة فارغة حالياً. سيتم إيقاف البث.`);
+    activeStreams.delete(id);
+    return;
+  }
+
+  // ضمان بقاء المؤشر ضمن نطاق المصفوفة (Looping)
+  if (trackIndex >= videoFiles.length || trackIndex < 0) {
+    trackIndex = 0;
+  }
+
+  const currentVideoPath = path.join(destDir, videoFiles[trackIndex]);
+  console.log(`[${dest.name}] جاري بث الملف رقم [${trackIndex}]: ${videoFiles[trackIndex]}`);
+
+  // البرامترات المحسنة بالكامل لحل مشكلة صوت 1.4 وقنوات الستيريو والمزامنة
+  const ffmpegArgs = [
+    '-re',
+    '-fflags', '+genpts+discardcorrupt+igndts', // تجاهل الحزم التالفة وإعادة توليد الـ Timestamps تلقائياً
+    '-i', currentVideoPath,
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-b:v', '1500k',
+    '-maxrate', '2000k',
+    '-bufsize', '3000k',
+    '-pix_fmt', 'yuv420p',
+    '-g', '60', 
+    
+    // الفلاتر المحدثة لضبط قنوات الصوت قسرياً ومنع تجمد العملية
+    '-af', 'aformat=channel_layouts=stereo,aresample=async=1:min_hard_comp=0.010000:max_soft_comp=0.010000',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-ar', '44100',
+    '-ac', '2',
+    
+    '-f', 'flv',
+    `rtmps://a.rtmp.youtube.com:443/live2/${dest.key}`
+  ];
+
+  const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+
+  // تحديث الخريطة بالمرجع الحالي والمسار النشط
+  activeStreams.set(id, {
+    process: ffmpegProcess,
+    currentTrackIndex: trackIndex,
+    isManuallyStopped: false
+  });
+
+  ffmpegProcess.stderr.on('data', (data) => {
+    // طباعة التحذيرات الهامة فقط لعدم ملء السجلات بدون داعٍ
+    const msg = data.toString();
+    if (msg.includes('Error') || msg.includes('channel element')) {
+      console.error(`[${dest.name}] ffmpeg error output: ${msg.trim()}`);
+    }
+  });
+
+  ffmpegProcess.on('close', (code) => {
+    const streamData = activeStreams.get(id);
+    
+    // إذا تم إيقاف البث يدوياً بواسطة المستخدم من لوحة التحكم، لا تفعل شيئاً
+    if (streamData && streamData.isManuallyStopped) {
+      console.log(`[${dest.name}] تم إنهاء البث يدوياً من قبل المستخدم.`);
+      return;
+    }
+
+    console.log(`[${dest.name}] انتهى تشغيل الفيديو بكود (${code}).`);
+
+    let nextIndex = trackIndex + 1;
+
+    // في حال حدث انهيار للفيديو الحالي (code ليس 0)، نقوم بالتخطي الفوري للفيديو التالي
+    if (code !== 0) {
+      console.error(`[${dest.name}] تم رصد مشكلة تسببت في توقف الفيديو الحالي! جاري الانتقال التلقائي للفيديو التالي لمنع توقف منصة يوتيوب...`);
+    }
+
+    // إعادة التشغيل الفوري خلال 500 ملي ثانية للحفاظ على استقرار الـ Live Connection مع يوتيوب
+    setTimeout(() => {
+      runDynamicStream(id, nextIndex);
+    }, 500);
+  });
+}
+
 app.post('/api/stream/start/:id', (req, res) => {
   const { id } = req.params;
   const dest = destinations.find(d => d.id === id);
@@ -172,52 +251,13 @@ app.post('/api/stream/start/:id', (req, res) => {
   if (activeStreams.has(id)) return res.status(400).send('Stream is already running.');
 
   const destDir = path.join(PLAYLISTS_DIR, id);
+  if (!fs.existsSync(destDir)) return res.status(404).send('Playlist folder missing.');
+  
   const videoFiles = fs.readdirSync(destDir).filter(f => !f.startsWith('.'));
   if (videoFiles.length === 0) return res.status(400).send('Playlist is empty.');
 
-  const playlistFile = path.join(destDir, 'playlist.txt');
-  const playlistContent = videoFiles.map(file => `file '${path.join(destDir, file)}'`).join('\n');
-  fs.writeFileSync(playlistFile, playlistContent);
-
-const ffmpegArgs = [
-    // إعدادات الإدخال ومعالجة الطوابع الزمنية قبل قراءة الملف
-    '-re',
-    '-fflags', '+genpts', // إعادة توليد الطوابع الزمنية المفقودة لمنع مشاكل الـ DTS
-    '-f', 'concat', 
-    '-safe', '0', 
-    '-stream_loop', '-1',
-    '-i', playlistFile,
-    
-    // ترميز موحد وخفيف جداً للفيديو ينهي مشاكل التوقف
-    '-c:v', 'libx264',
-    '-preset', 'veryfast',
-    '-b:v', '1500k',
-    '-maxrate', '2000k',
-    '-bufsize', '3000k',
-    '-pix_fmt', 'yuv420p',
-    '-g', '60', // إرسال Keyframe كل ثانيتين لليوتيوب
-    
-    // --- الحل الجذري الحديث والمضمون للصوت 5.1 والـ 1.4 ---
-    '-af', 'aformat=channel_layouts=stereo,aresample=async=1', // الفلتر المتوافق مع FFmpeg 5.1+
-    '-c:a', 'aac',                             // إعادة ترميز إجبارية تمنع الـ Stream Copy
-    '-b:a', '128k',                            // معدل نقل الصوت القياسي للبث
-    '-ar', '44100',                            // تثبيت معدل العينة القياسي 44.1kHz للبث المباشر
-    '-ac', '2',                                // تأكيد مخرجات الستيريو (قناتين)
-    
-    // إعدادات المخرجات والبث
-    '-f', 'flv',
-    `rtmps://a.rtmp.youtube.com:443/live2/${dest.key}`
-];
-  
-  const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
-  activeStreams.set(id, ffmpegProcess);
-
-  ffmpegProcess.stderr.on('data', (data) => console.error(`[${dest.name}] ffmpeg: ${data}`));
-  ffmpegProcess.on('close', (code) => {
-    console.log(`[${dest.name}] stream stopped (code ${code})`);
-    activeStreams.delete(id);
-    if (fs.existsSync(playlistFile)) fs.unlinkSync(playlistFile); // Clean up playlist file
-  });
+  // بدء تشغيل آلية البث الديناميكي من أول فيديو
+  runDynamicStream(id, 0);
 
   res.status(200).send(`Stream started for '${dest.name}'.`);
 });
@@ -225,10 +265,12 @@ const ffmpegArgs = [
 app.post('/api/stream/stop/:id', (req, res) => {
   const { id } = req.params;
   console.log(`[API] Action: Stop Stream | Destination ID: ${id}`);
-  const process = activeStreams.get(id);
+  const streamData = activeStreams.get(id);
 
-  if (process) {
-    process.kill('SIGKILL');
+  if (streamData) {
+    // نحدد علم الإيقاف اليدوي لمنع الدالة التلقائية من إعادة تشغيل نفسها في الخلفية
+    streamData.isManuallyStopped = true;
+    streamData.process.kill('SIGKILL');
     activeStreams.delete(id);
     res.status(200).send(`Stream stopped.`);
   } else {
