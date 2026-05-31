@@ -179,10 +179,20 @@ app.post('/api/stream/start/:id', (req, res) => {
   const playlistContent = videoFiles.map(file => `file '${path.join(destDir, file)}'`).join('\n');
   fs.writeFileSync(playlistFile, playlistContent);
 
-  const ffmpegArgs = [
-    '-re', '-f', 'concat', '-safe', '0', '-stream_loop', '-1',
+const ffmpegArgs = [
+    '-re', 
+    '-f', 'concat', 
+    '-safe', '0', 
+    '-stream_loop', '-1',
     '-i', playlistFile,
-    '-c', 'copy', '-f', 'flv', `rtmp://a.rtmp.youtube.com/live2/${dest.key}`
+    
+    // خيارات لضمان استقرار الاتصال ومنع الـ Input/output error
+    '-c', 'copy', 
+    '-f', 'flv',
+    '-flvflags', 'no_duration_filesize',
+    
+    // تحويل الرابط إلى rtmps الآمن واستخدام المنفذ المشفر 443 تلقائياً
+    `rtmps://a.rtmp.youtube.com:443/live2/${dest.key}`
   ];
 
   const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
