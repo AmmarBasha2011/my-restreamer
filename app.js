@@ -180,7 +180,9 @@ app.post('/api/stream/start/:id', (req, res) => {
   fs.writeFileSync(playlistFile, playlistContent);
 
 const ffmpegArgs = [
+    // إعدادات الإدخال ومعالجة الطوابع الزمنية قبل قراءة الملف
     '-re',
+    '-fflags', '+genpts', // إعادة توليد الطوابع الزمنية المفقودة أو المعطوبة لمنع مشاكل الـ DTS
     '-f', 'concat', 
     '-safe', '0', 
     '-stream_loop', '-1',
@@ -193,16 +195,19 @@ const ffmpegArgs = [
     '-maxrate', '2000k',
     '-bufsize', '3000k',
     '-pix_fmt', 'yuv420p',
-    '-g', '60', // إرسال Keyframe كل ثانيتين لليوتيوب
+    '-g', '60', // إرسال Keyframe كل ثانيتين لليوتيوب (مثالي لـ 30fps)
     
+    // إعدادات الصوت الموحدة والمحمية من اختلاف القنوات والترددات
     '-c:a', 'aac',
+    '-ac', '2',    // إجبار الفلتر على تحويل الصوت إلى Stereo (2 قنوات) لحل خطأ الـ 1.6 channel
     '-b:a', '128k',
-    '-ar', '44100',
+    '-ar', '44100', // تثبيت معدل العينة على 44.1kHz وهو التردد القياسي للبث المباشر
     
+    // إعدادات المخرجات والبث
     '-f', 'flv',
     `rtmps://a.rtmp.youtube.com:443/live2/${dest.key}`
-  ];
-
+];
+  
   const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
   activeStreams.set(id, ffmpegProcess);
 
