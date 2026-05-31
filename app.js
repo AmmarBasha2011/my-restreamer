@@ -123,20 +123,23 @@ app.post('/api/youtube/add/:id', (req, res) => {
   const destDir = path.join(PLAYLISTS_DIR, id);
   if (!fs.existsSync(destDir)) return res.status(404).send('Destination not found.');
 
-  // بناء الإعدادات النظيفة تماماً بدون كوكيز وبدون OAuth تالف
+  // بناء الإعدادات النظيفة تماماً مع إضافة الرابط في النهاية
   const ytdlpArgs = [
     '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', 
     '-o', path.join(destDir, '%(title)s.%(ext)s'), 
     
-    // إجبار الأداة على استخدام مشغل أندرويد للهواتف (Android client لا يطلب كوكيز أو فحص بوتات للروابط العامة)
+    // إستراتيجية عميل الأندرويد لتفادي قيود السيرفرات السحابية
     '--extractor-args', 'youtube:player-client=android',
     '--user-agent', 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
     
-    // إعدادات إضافية لتفادي الحظر الأمني للسيرفرات
+    // إعدادات الأمان والتخطي
     '--no-check-certificates',
     '--geo-bypass',
     '--sleep-requests', '1.5',
-    '--no-warnings'
+    '--no-warnings',
+    
+    // إدخال رابط الفيديو هنا كعنصر أساسي في المصفوفة لتقرأه الأداة بنجاح
+    url 
   ];
 
   console.log(`[yt-dlp] Starting 100% clean download with args: ${ytdlpArgs.join(' ')}`);
