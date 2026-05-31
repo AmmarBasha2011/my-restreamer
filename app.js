@@ -180,18 +180,21 @@ app.post('/api/stream/start/:id', (req, res) => {
   fs.writeFileSync(playlistFile, playlistContent);
 
 const ffmpegArgs = [
-    '-re', 
+    '-re',
+    // توليد طوابع زمنية جديدة للملفات لتفادي الـ Out of order
+    '-fflags', '+genpts', 
     '-f', 'concat', 
     '-safe', '0', 
     '-stream_loop', '-1',
     '-i', playlistFile,
     
-    // خيارات لضمان استقرار الاتصال ومنع الـ Input/output error
-    '-c', 'copy', 
+    // نسخ المسارات مع إصلاح أوقات الصوت لتطابق الفيديو
+    '-c', 'copy',
+    '-async', '1',
+    
     '-f', 'flv',
     '-flvflags', 'no_duration_filesize',
     
-    // تحويل الرابط إلى rtmps الآمن واستخدام المنفذ المشفر 443 تلقائياً
     `rtmps://a.rtmp.youtube.com:443/live2/${dest.key}`
   ];
 
