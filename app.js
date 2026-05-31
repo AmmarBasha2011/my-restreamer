@@ -181,20 +181,25 @@ app.post('/api/stream/start/:id', (req, res) => {
 
 const ffmpegArgs = [
     '-re',
-    // توليد طوابع زمنية جديدة للملفات لتفادي الـ Out of order
-    '-fflags', '+genpts', 
     '-f', 'concat', 
     '-safe', '0', 
     '-stream_loop', '-1',
     '-i', playlistFile,
     
-    // نسخ المسارات مع إصلاح أوقات الصوت لتطابق الفيديو
-    '-c', 'copy',
-    '-async', '1',
+    // ترميز موحد وخفيف جداً ينهي مشاكل الـ DTS للأبد
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-b:v', '1500k',
+    '-maxrate', '2000k',
+    '-bufsize', '3000k',
+    '-pix_fmt', 'yuv420p',
+    '-g', '60', // إرسال Keyframe كل ثانيتين لليوتيوب
+    
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-ar', '44100',
     
     '-f', 'flv',
-    '-flvflags', 'no_duration_filesize',
-    
     `rtmps://a.rtmp.youtube.com:443/live2/${dest.key}`
   ];
 
