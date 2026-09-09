@@ -29,6 +29,7 @@
 - [Overview](#-overview)
 - [Features](#-features)
 - [Quick Start](#-quick-start)
+- [Authentication](#-authentication)
 - [Usage](#-usage)
 - [Channel Types](#-channel-types)
 - [Scheduling (Non-24 Live)](#-scheduling-non-24-live)
@@ -69,6 +70,7 @@ Perfect for:
 - 🔑 **Per-Channel Stream Keys** — Each channel has its own YouTube stream key
 - 🎨 **Modern UI** — Clean, responsive web interface
 - 🔒 **OAuth 2.0** — Secure YouTube authentication with auto token refresh
+- 🔐 **Username/Password Authentication** — Secure access to the dashboard
 
 ### Advanced Features
 - 🛡️ **Self-healing Streams** — Auto-recovery on video errors
@@ -100,16 +102,51 @@ npm install
 npm start
 ```
 
-Visit `http://localhost:3000` in your browser.
+Visit `http://localhost:7860` in your browser.
 
 ### Environment Variables
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `PORT` | Server port (default: 3000) | No |
+| `PORT` | Server port (default: 7860) | No |
+| `USERNAME` | Dashboard login username | Recommended |
+| `PASSWORD` | Dashboard login password | Recommended |
 | `CLIENT_ID` | Google OAuth Client ID | For Non-24 |
 | `CLIENT_SECRET` | Google OAuth Client Secret | For Non-24 |
 | `REDIRECT_URI` | OAuth callback URL | For Non-24 |
+
+---
+
+## 🔐 Authentication
+
+The dashboard is protected with username and password authentication. You can set credentials via environment variables.
+
+### Default Credentials
+If no environment variables are set:
+- **Username:** `admin`
+- **Password:** `admin`
+
+> ⚠️ **Important:** Change the default credentials in production!
+
+### Setting Custom Credentials
+
+**Local Development:**
+```bash
+export USERNAME="myuser"
+export PASSWORD="mypassword"
+npm start
+```
+
+**HuggingFace Space:**
+1. Go to your Space Settings
+2. Add Repository Secrets:
+   - `USERNAME` = your chosen username
+   - `PASSWORD` = your chosen password
+
+### Session Management
+- Sessions last **24 hours**
+- Logout via `/logout` endpoint
+- All routes (except login) require authentication
 
 ---
 
@@ -121,7 +158,7 @@ Visit `http://localhost:3000` in your browser.
 2. Enter channel name
 3. Select **"24/7 Live (Loop)"**
 4. Enter YouTube Stream Key
-5. Upload videos to the playlist
+5. Upload videos to the playlist (via file manager or direct upload to the Space)
 6. Click **"▶️ Start"**
 
 ### Creating a Non-24 Scheduled Channel
@@ -242,7 +279,7 @@ Visit `http://localhost:3000` in your browser.
 2. Click **Create Credentials > OAuth client ID**
 3. Select **Web application** as application type
 4. Add your redirect URI:
-   - Local: `http://localhost:3000/auth/callback`
+   - Local: `http://localhost:7860/auth/callback`
    - HuggingFace: `https://YOUR_SPACE.hf.space/auth/callback`
 5. Copy the **Client ID** and **Client Secret**
 
@@ -258,6 +295,14 @@ Visit `http://localhost:3000` in your browser.
 ---
 
 ## 📡 API Reference
+
+### Authentication
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/login` | Login page |
+| `POST` | `/api/login` | Submit credentials |
+| `GET` | `/logout` | Sign out |
 
 ### Destinations
 
@@ -288,7 +333,7 @@ Visit `http://localhost:3000` in your browser.
 |--------|----------|-------------|
 | `PUT` | `/api/destinations/:id/schedule` | Update channel schedule |
 
-### Authentication
+### YouTube Auth
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -300,14 +345,18 @@ Visit `http://localhost:3000` in your browser.
 
 ## 🌐 Deployment
 
-### HuggingFace Spaces
+### HuggingFace Spaces (Recommended)
 
 1. Create a new Space with Docker SDK
-2. Set environment variables:
+2. Set environment variables (Repository Secrets):
+   - `USERNAME`: Your dashboard username
+   - `PASSWORD`: Your dashboard password
    - `CLIENT_ID`: Your Google OAuth Client ID
    - `CLIENT_SECRET`: Your Google OAuth Client Secret
    - `REDIRECT_URI`: `https://YOUR_SPACE.hf.space/auth/callback`
 3. Push your code to the Space
+
+> 💡 The default port is **7860** (compatible with HuggingFace)
 
 ### VPS/Server
 
@@ -318,6 +367,9 @@ cd my-restreamer
 npm install
 
 # Set environment variables
+export PORT=7860
+export USERNAME="myuser"
+export PASSWORD="mypassword"
 export CLIENT_ID="your-client-id"
 export CLIENT_SECRET="your-client-secret"
 export REDIRECT_URI="https://your-domain.com/auth/callback"
@@ -347,10 +399,12 @@ docker build -t restreamer .
 
 # Run container
 docker run -d \
-  -p 3000:3000 \
+  -p 7860:7860 \
+  -e USERNAME="admin" \
+  -e PASSWORD="admin" \
   -e CLIENT_ID="your-client-id" \
   -e CLIENT_SECRET="your-client-secret" \
-  -e REDIRECT_URI="http://localhost:3000/auth/callback" \
+  -e REDIRECT_URI="http://localhost:7860/auth/callback" \
   -v $(pwd)/playlists:/usr/src/app/playlists \
   --name restreamer \
   restreamer
@@ -364,8 +418,10 @@ services:
   restreamer:
     build: .
     ports:
-      - "3000:3000"
+      - "7860:7860"
     environment:
+      - USERNAME=${USERNAME}
+      - PASSWORD=${PASSWORD}
       - CLIENT_ID=${CLIENT_ID}
       - CLIENT_SECRET=${CLIENT_SECRET}
       - REDIRECT_URI=${REDIRECT_URI}
@@ -386,7 +442,7 @@ my-restreamer/
 ├── destinations.json       # Channel configurations
 ├── package.json            # Dependencies
 ├── Dockerfile              # Docker configuration
-├── .gitignore
+├── LICENSE                 # All Rights Reserved
 ├── public/
 │   └── index.html          # Web interface
 └── playlists/
@@ -436,6 +492,7 @@ See the [LICENSE](LICENSE) file for full details.
 ## 🙏 Acknowledgments
 
 - [Express.js](https://expressjs.com/) — Web framework
+- [express-session](https://github.com/expressjs/session) — Session management
 - [node-cron](https://github.com/node-cron/node-cron) — Cron scheduling
 - [googleapis](https://github.com/googleapis/google-api-nodejs-client) — YouTube API
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) — YouTube video downloader
