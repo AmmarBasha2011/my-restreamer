@@ -4,6 +4,8 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { getAuthUrl, setTokensFromCode, loadCredentials, saveCredentials } = require('./youtube-api');
+const { startNon24Stream, stopNon24Stream, scheduleStream, unscheduleStream, isStreaming, initializeScheduledJobs } = require('./scheduler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,10 +20,10 @@ if (!fs.existsSync(DESTINATIONS_FILE)) fs.writeFileSync(DESTINATIONS_FILE, '[]')
 
 let destinations = JSON.parse(fs.readFileSync(DESTINATIONS_FILE, 'utf-8'));
 
-// لتخزين مرجع العمليات النشطة ومعلومات تتبع الفيديوهات لكل قناة بث
+// Store active 24/7 streams
 const activeStreams = new Map(); // K: destinationId, V: { process, currentTrackIndex, isManuallyStopped }
 
-// Self-healing: Ensure playlist directories exist for all known destinations on startup
+// Self-healing: Ensure playlist directories exist
 destinations.forEach(dest => {
   const destDir = path.join(PLAYLISTS_DIR, dest.id);
   if (!fs.existsSync(destDir)) {
@@ -29,6 +31,9 @@ destinations.forEach(dest => {
     fs.mkdirSync(destDir, { recursive: true });
   }
 });
+
+// Initialize scheduled jobs for Non-24 channels
+initializeScheduledJobs();
 
 // --- HELPER FUNCTIONS ---
 const saveDestinations = () => {
@@ -39,7 +44,7 @@ const saveDestinations = () => {
 app.use(express.json());
 app.use(express.static('public'));
 
-// --- MULTER STORAGE for per-destination uploads ---
+// --- MULTER STORAGE ---
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const destDir = path.join(PLAYLISTS_DIR, req.params.id);
@@ -49,47 +54,120 @@ const storage = multer.diskStorage({
     cb(null, destDir);
   },
   filename: (req, file, cb) => {
-    cb(null, Buffer.from(file.originalname, 'latin1').toString('utf8')); // Handle special characters
+    cb(null, Buffer.from(file.originalname, 'latin1').toString('utf8'));
   }
 });
 const upload = multer({ storage: storage });
 
+// --- YOUTUBE AUTH ROUTES ---
+
+app.get('/auth', (req, res) => {
+  const authUrl = getAuthUrl();
+  res.redirect(authUrl);
+});
+
+app.get('/auth/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) {
+    return res.status(400).send('Authorization code missing.');
+  }
+  try {
+    const tokens = await setTokensFromCode(code);
+    saveCredentials(tokens);
+    res.send(`
+      <html>
+        <head><title>Authentication Successful</title></head>
+        <body style="font-family: sans-serif; text-align: center; padding: 50px;">
+          <h1 style="color: #28a745;">✓ Authentication Successful!</h1>
+          <p>Your YouTube account has been connected.</p>
+          <p>You can close this window and return to the Restreamer.</p>
+          <button onclick="window.close()" style="padding: 10px 20px; font-size: 16px; cursor: pointer;">Close Window</button>
+        </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error('[Auth] Error:', err.message);
+    res.status(500).send(`Authentication failed: ${err.message}`);
+  }
+});
+
+app.get('/api/auth/status', (req, res) => {
+  const creds = loadCredentials();
+  res.json({ authenticated: !!creds });
+});
+
 // --- API: DESTINATION & PLAYLIST MANAGEMENT ---
 
 app.get('/api/destinations', (req, res) => {
+  const videoExts = ['.mp4', '.webm', '.mov', '.mkv', '.avi', '.flv', '.m4v'];
   const fullDestinations = destinations.map(dest => {
     const destDir = path.join(PLAYLISTS_DIR, dest.id);
-    const videos = fs.existsSync(destDir) ? fs.readdirSync(destDir).filter(f => !f.startsWith('.')) : [];
-    return { ...dest, playlist: videos, isStreaming: activeStreams.has(dest.id) };
+    const videos = fs.existsSync(destDir) ? fs.readdirSync(destDir).filter(f => !f.startsWith('.') && videoExts.includes(path.extname(f).toLowerCase())) : [];
+    const streaming247 = activeStreams.has(dest.id);
+    const streamingNon24 = isStreaming(dest.id);
+    return { 
+      ...dest, 
+      playlist: videos, 
+      isStreaming: streaming247 || streamingNon24,
+      streaming247,
+      streamingNon24
+    };
   });
   res.json(fullDestinations);
 });
 
 app.post('/api/destinations', (req, res) => {
-  const { name, key } = req.body;
-  if (!name || !key) return res.status(400).send('Name and Key are required.');
+  const { name, key, type = '247' } = req.body;
+  if (!name) return res.status(400).send('Name is required.');
   
-  const newDestination = { id: crypto.randomUUID(), name, key };
+  // For 24/7, key is required. For Non-24, key is not needed (uses YouTube API)
+  if (type === '247' && !key) return res.status(400).send('Stream Key is required for 24/7 channels.');
+  
+  const newDestination = { 
+    id: crypto.randomUUID(), 
+    name, 
+    key: key || null,
+    type // '247' or 'non24'
+  };
+  
+  // For Non-24, add schedule info
+  if (type === 'non24') {
+    const { mode, cron, title, description, categoryId } = req.body;
+    newDestination.schedule = {
+      mode: mode || 'manual', // 'manual' or 'scheduled'
+      cron: cron || null,
+      title: title || name,
+      description: description || '',
+      categoryId: categoryId || '27' // 27 = Education
+    };
+  }
+  
   destinations.push(newDestination);
-  
-  // Create a dedicated directory for this destination's playlist
   fs.mkdirSync(path.join(PLAYLISTS_DIR, newDestination.id));
-  
   saveDestinations();
+  
+  // If scheduled, start the cron job
+  if (type === 'non24' && newDestination.schedule.mode === 'scheduled' && newDestination.schedule.cron) {
+    scheduleStream(newDestination);
+  }
+  
   res.status(201).json(newDestination);
 });
 
 app.delete('/api/destinations/:id', (req, res) => {
   const { id } = req.params;
-  if (activeStreams.has(id)) return res.status(400).send('Cannot delete with an active stream.');
+  if (activeStreams.has(id) || isStreaming(id)) {
+    return res.status(400).send('Cannot delete with an active stream.');
+  }
   
   destinations = destinations.filter(d => d.id !== id);
-  
-  // Remove the associated playlist directory
   const destDir = path.join(PLAYLISTS_DIR, id);
   if (fs.existsSync(destDir)) {
     fs.rmSync(destDir, { recursive: true, force: true });
   }
+  
+  // Remove scheduled job
+  unscheduleStream(id);
   
   saveDestinations();
   res.status(200).send('Destination and its playlist deleted.');
@@ -104,7 +182,9 @@ app.post('/api/upload/:id', upload.single('video'), (req, res) => {
 
 app.post('/api/playlist/clear/:id', (req, res) => {
   const { id } = req.params;
-  if (activeStreams.has(id)) return res.status(400).send('Cannot clear playlist while stream is active.');
+  if (activeStreams.has(id) || isStreaming(id)) {
+    return res.status(400).send('Cannot clear playlist while stream is active.');
+  }
   
   const destDir = path.join(PLAYLISTS_DIR, id);
   if (!fs.existsSync(destDir)) return res.status(404).send('Playlist not found.');
@@ -113,7 +193,7 @@ app.post('/api/playlist/clear/:id', (req, res) => {
   res.status(200).send('Playlist cleared successfully.');
 });
 
-// --- API: STREAM CONTROL ---
+// --- API: 24/7 STREAM CONTROL ---
 
 app.post('/api/youtube/add/:id', (req, res) => {
   const { id } = req.params;
@@ -154,7 +234,7 @@ app.post('/api/youtube/add/:id', (req, res) => {
   res.status(202).send('Download started. The video will be added to the playlist shortly.');
 });
 
-// دالة التشغيل الذكية التي تبث ملفاً تلو الآخر وتتعافى تلقائياً عند الأخطاء
+// دالة التشغيل الذكية للـ 24/7
 function runDynamicStream(id, trackIndex = 0) {
   const dest = destinations.find(d => d.id === id);
   if (!dest) return;
@@ -162,14 +242,14 @@ function runDynamicStream(id, trackIndex = 0) {
   const destDir = path.join(PLAYLISTS_DIR, id);
   if (!fs.existsSync(destDir)) return;
 
-  const videoFiles = fs.readdirSync(destDir).filter(f => !f.startsWith('.'));
+  const videoExts = ['.mp4', '.webm', '.mov', '.mkv', '.avi', '.flv', '.m4v'];
+  const videoFiles = fs.readdirSync(destDir).filter(f => !f.startsWith('.') && videoExts.includes(path.extname(f).toLowerCase()));
   if (videoFiles.length === 0) {
     console.log(`[${dest.name}] القائمة فارغة حالياً. سيتم إيقاف البث.`);
     activeStreams.delete(id);
     return;
   }
 
-  // ضمان بقاء المؤشر ضمن نطاق المصفوفة (Looping)
   if (trackIndex >= videoFiles.length || trackIndex < 0) {
     trackIndex = 0;
   }
@@ -177,10 +257,9 @@ function runDynamicStream(id, trackIndex = 0) {
   const currentVideoPath = path.join(destDir, videoFiles[trackIndex]);
   console.log(`[${dest.name}] جاري بث الملف رقم [${trackIndex}]: ${videoFiles[trackIndex]}`);
 
-  // البرامترات المحسنة بالكامل لحل مشكلة صوت 1.4 وقنوات الستيريو والمزامنة
   const ffmpegArgs = [
     '-re',
-    '-fflags', '+genpts+discardcorrupt+igndts', // تجاهل الحزم التالفة وإعادة توليد الـ Timestamps تلقائياً
+    '-fflags', '+genpts+discardcorrupt+igndts',
     '-i', currentVideoPath,
     '-c:v', 'libx264',
     '-preset', 'veryfast',
@@ -189,21 +268,17 @@ function runDynamicStream(id, trackIndex = 0) {
     '-bufsize', '3000k',
     '-pix_fmt', 'yuv420p',
     '-g', '60', 
-    
-    // الفلاتر المحدثة لضبط قنوات الصوت قسرياً ومنع تجمد العملية
     '-af', 'aformat=channel_layouts=stereo,aresample=async=1:min_hard_comp=0.010000:max_soft_comp=0.010000',
     '-c:a', 'aac',
     '-b:a', '128k',
     '-ar', '44100',
     '-ac', '2',
-    
     '-f', 'flv',
     `rtmps://a.rtmp.youtube.com:443/live2/${dest.key}`
   ];
 
   const ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
 
-  // تحديث الخريطة بالمرجع الحالي والمسار النشط
   activeStreams.set(id, {
     process: ffmpegProcess,
     currentTrackIndex: trackIndex,
@@ -211,7 +286,6 @@ function runDynamicStream(id, trackIndex = 0) {
   });
 
   ffmpegProcess.stderr.on('data', (data) => {
-    // طباعة التحذيرات الهامة فقط لعدم ملء السجلات بدون داعٍ
     const msg = data.toString();
     if (msg.includes('Error') || msg.includes('channel element')) {
       console.error(`[${dest.name}] ffmpeg error output: ${msg.trim()}`);
@@ -221,7 +295,6 @@ function runDynamicStream(id, trackIndex = 0) {
   ffmpegProcess.on('close', (code) => {
     const streamData = activeStreams.get(id);
     
-    // إذا تم إيقاف البث يدوياً بواسطة المستخدم من لوحة التحكم، لا تفعل شيئاً
     if (streamData && streamData.isManuallyStopped) {
       console.log(`[${dest.name}] تم إنهاء البث يدوياً من قبل المستخدم.`);
       return;
@@ -231,12 +304,10 @@ function runDynamicStream(id, trackIndex = 0) {
 
     let nextIndex = trackIndex + 1;
 
-    // في حال حدث انهيار للفيديو الحالي (code ليس 0)، نقوم بالتخطي الفوري للفيديو التالي
     if (code !== 0) {
       console.error(`[${dest.name}] تم رصد مشكلة تسببت في توقف الفيديو الحالي! جاري الانتقال التلقائي للفيديو التالي لمنع توقف منصة يوتيوب...`);
     }
 
-    // إعادة التشغيل الفوري خلال 500 ملي ثانية للحفاظ على استقرار الـ Live Connection مع يوتيوب
     setTimeout(() => {
       runDynamicStream(id, nextIndex);
     }, 500);
@@ -248,7 +319,9 @@ app.post('/api/stream/start/:id', (req, res) => {
   const dest = destinations.find(d => d.id === id);
 
   if (!dest) return res.status(404).send('Destination not found.');
-  if (activeStreams.has(id)) return res.status(400).send('Stream is already running.');
+  if (activeStreams.has(id) || isStreaming(id)) {
+    return res.status(400).send('Stream is already running.');
+  }
 
   const destDir = path.join(PLAYLISTS_DIR, id);
   if (!fs.existsSync(destDir)) return res.status(404).send('Playlist folder missing.');
@@ -256,29 +329,73 @@ app.post('/api/stream/start/:id', (req, res) => {
   const videoFiles = fs.readdirSync(destDir).filter(f => !f.startsWith('.'));
   if (videoFiles.length === 0) return res.status(400).send('Playlist is empty.');
 
-  // بدء تشغيل آلية البث الديناميكي من أول فيديو
-  runDynamicStream(id, 0);
-
-  res.status(200).send(`Stream started for '${dest.name}'.`);
+  // For 24/7, use the looping stream
+  if (dest.type === '247') {
+    runDynamicStream(id, 0);
+    res.status(200).send(`24/7 Stream started for '${dest.name}'.`);
+  } else {
+    // For Non-24, use YouTube API
+    startNon24Stream(dest).then(result => {
+      if (result.success) {
+        res.status(200).send(result.message);
+      } else {
+        res.status(400).send(result.error);
+      }
+    });
+  }
 });
 
 app.post('/api/stream/stop/:id', (req, res) => {
   const { id } = req.params;
   console.log(`[API] Action: Stop Stream | Destination ID: ${id}`);
+  
+  // Try 24/7 stop
   const streamData = activeStreams.get(id);
-
   if (streamData) {
-    // نحدد علم الإيقاف اليدوي لمنع الدالة التلقائية من إعادة تشغيل نفسها في الخلفية
     streamData.isManuallyStopped = true;
     streamData.process.kill('SIGKILL');
     activeStreams.delete(id);
-    res.status(200).send(`Stream stopped.`);
-  } else {
-    res.status(400).send('Stream not running.');
+    return res.status(200).send('24/7 Stream stopped.');
   }
+  
+  // Try Non-24 stop
+  if (stopNon24Stream(id)) {
+    return res.status(200).send('Non-24 Stream stopped.');
+  }
+  
+  res.status(400).send('Stream not running.');
+});
+
+// --- API: NON-24 SCHEDULE MANAGEMENT ---
+
+app.put('/api/destinations/:id/schedule', (req, res) => {
+  const { id } = req.params;
+  const dest = destinations.find(d => d.id === id);
+  if (!dest) return res.status(404).send('Destination not found.');
+  if (dest.type !== 'non24') return res.status(400).send('Only Non-24 channels support scheduling.');
+  
+  const { mode, cron, title, description, categoryId } = req.body;
+  
+  dest.schedule = {
+    mode: mode || 'manual',
+    cron: cron || null,
+    title: title || dest.name,
+    description: description || '',
+    categoryId: categoryId || '27'
+  };
+  
+  // Update cron job
+  unscheduleStream(id);
+  if (mode === 'scheduled' && cron) {
+    scheduleStream(dest);
+  }
+  
+  saveDestinations();
+  res.json(dest);
 });
 
 // --- SERVER START ---
 app.listen(PORT, () => {
-  console.log(`Per-stream playlist Restreamer running on http://localhost:${PORT}`);
+  console.log(`Advanced Restreamer running on http://localhost:${PORT}`);
+  console.log(`YouTube Auth URL: http://localhost:${PORT}/auth`);
 });

@@ -1,23 +1,24 @@
-# Use an official Node.js runtime as a parent image
 FROM node:18-slim
 
-# Install ffmpeg
-RUN apt-get update && apt-get install -y ffmpeg curl &&     curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp &&     chmod a+rx /usr/local/bin/yt-dlp
+# Install ffmpeg, curl, and python (for yt-dlp)
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    curl \
+    python3 \
+    && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory in the container
 WORKDIR /usr/src/app
 
-# Copy package.json and package-lock.json
 COPY package*.json ./
+RUN npm install --production
 
-# Install any needed packages
-RUN npm install
-
-# Bundle app source
 COPY . .
 
-# Make port 3000 available to the world outside this container
+# Create playlists directory
+RUN mkdir -p playlists
+
 EXPOSE 3000
 
-# Define the command to run your app
-CMD [ "npm", "start" ]
+CMD ["npm", "start"]

@@ -2,21 +2,90 @@
   {
     "id": "f7f6394e-76d9-4f72-b71f-caff3df012fa",
     "name": "INEX Team Podcasts",
-    "key": "e97q-f0x8-xbaw-1f2h-cxmy"
+    "key": "e97q-f0x8-xbaw-1f2h-cxmy",
+    "type": "247"
   },
   {
     "id": "42a2b2a9-ae9e-4f88-86ef-b6c938078fd4",
     "name": "INEX Team Video Overviews",
-    "key": "3qjf-vke2-r5ab-whsw-a2a7"
+    "key": "3qjf-vke2-r5ab-whsw-a2a7",
+    "type": "247"
   },
   {
     "id": "d08875ec-276a-461c-ab18-87aeb557f813",
     "name": "INEX Team Quran",
-    "key": "r2gd-txsj-2gyv-7xxh-3dfv"
+    "key": "r2gd-txsj-2gyv-7xxh-3dfv",
+    "type": "247"
   },
   {
     "id": "42e89de5-c82c-4a43-a659-aa759308c404",
     "name": "Hamon and Fatoha Story",
-    "key": "j0bf-k2zk-9pdm-cszu-bk7t"
+    "key": "j0bf-k2zk-9pdm-cszu-bk7t",
+    "type": "247"
+  },
+  {
+    "id": "quran-01-ys-rahman-waqia",
+    "name": "بث يس والرحمن والواقعة",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 7 * * *",
+      "title": "ما أحلى سورة يس والرحمن والواقعة — القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لأعظم السور — يس والرحمن والواقعة — بصوت القارئ عمار الخطيب",
+      "categoryId": "27"
+    }
+  },
+  {
+    "id": "quran-02-yusuf",
+    "name": "بث سورة يوسف",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 12 * * *",
+      "title": "سورة يوسف كاملة — قصة نبي الله يوسف | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لقصة نبي الله يوسف عليه السلام بصوت القارئ عمار الخطيب",
+      "categoryId": "27"
+    }
+  },
+  {
+    "id": "quran-03-nur-naml",
+    "name": "بث النور والنمل",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 15 * * *",
+      "title": "سورتا النور والنمل — تلاوة خاشعة | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسورتي النور والنمل بصوت القارئ عمار الخطيب",
+      "categoryId": "27"
+    }
+  },
+  {
+    "id": "quran-04-juz-amma",
+    "name": "بث الجزء عمّ",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 19 * * *",
+      "title": "الجزء عمّ — تلاوة خاشعة | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة للجزء عمّ كاملاً بصوت القارئ عمار الخطيب",
+      "categoryId": "27"
+    }
+  },
+  {
+    "id": "quran-05-mulk-tawhid",
+    "name": "بث الملك والتوحيد",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 22 * * *",
+      "title": "سور الملك والتوحيد — تلاوة خاشعة | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسور الملك والتوحيد بصوت القارئ عمار الخطيب",
+      "categoryId": "27"
+    }
   }
 ]

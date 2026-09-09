@@ -1,8 +1,18 @@
 # Dependencies
-/node_modules
+node_modules/
+
+# Secrets - NEVER commit credentials
+credentials.json
+
+# Environment
+.env
 
 # Uploads
 /uploads
 
-# Env
-.env
+# Playlists (local videos)
+/playlists/*
+!/playlists/.gitkeep
+
+# Logs
+*.log
