@@ -4,8 +4,8 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const { getAuthUrl, setTokensFromCode, loadCredentials, saveCredentials } = require('./youtube-api');
-const { startNon24Stream, stopNon24Stream, scheduleStream, unscheduleStream, isStreaming, initializeScheduledJobs } = require('./scheduler');
+const { getAuthUrl, setTokensFromCode } = require('./youtube-api');
+const { startNon24Stream, stopNon24Stream, scheduleStream, unscheduleStream, isStreaming, initializeScheduledJobs, loadCredentials, saveCredentials } = require('./scheduler');
 
 const app = express();
 const PORT = process.env.PORT || 7860;
