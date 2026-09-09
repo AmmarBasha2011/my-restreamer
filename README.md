@@ -239,27 +239,31 @@ npm start
 | `0 7,12,18 * * *` | Daily at 7 AM, 12 PM, 6 PM |
 | `*/30 * * * *` | Every 30 minutes |
 | `0 8 * * 1-5` | Weekdays at 8 AM |
-| `0 10 * * 0` | Every Sunday at 10 AM |
-| `0 0 1 * *` | First day of every month at midnight |
+| `0 10 * * 5` | Every Friday at 10 AM |
+| `0 11 * * 6` | Every Saturday at 11 AM |
+| `0 9 */2 * *` | Every 2 days at 9 AM |
+| `0 10 */3 * *` | Every 3 days at 10 AM |
+| `0 10 1-7 * 5` | First Friday of month at 10 AM |
+| `0 23 28-31 * *` | Last day of month at 11 PM |
 
 ### YouTube Stream Categories
 
-| ID | Category |
-|----|----------|
-| 1 | Film & Animation |
-| 2 | Autos & Vehicles |
-| 10 | Music |
-| 17 | Sports |
-| 19 | Travel & Events |
-| 20 | Gaming |
-| 22 | People & Blogs |
-| 23 | Comedy |
-| 24 | Entertainment |
-| 25 | News & Politics |
-| 26 | Howto & Style |
-| 27 | Education |
-| 28 | Science & Technology |
-| 29 | Nonprofits & Activism |
+| ID | Category | Default? |
+|----|----------|----------|
+| 1 | Film & Animation | |
+| 2 | Autos & Vehicles | |
+| 10 | Music | ✅ Default |
+| 17 | Sports | |
+| 19 | Travel & Events | |
+| 20 | Gaming | |
+| 22 | People & Blogs | |
+| 23 | Comedy | |
+| 24 | Entertainment | |
+| 25 | News & Politics | |
+| 26 | Howto & Style | |
+| 27 | Education | |
+| 28 | Science & Technology | |
+| 29 | Nonprofits & Activism | |
 
 ---
 
