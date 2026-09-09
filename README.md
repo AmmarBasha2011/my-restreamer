@@ -8,7 +8,7 @@
 [![Express](https://img.shields.io/badge/Express-4.18-000000?style=for-the-badge&logo=express&logoColor=white)](https://expressjs.com/)
 [![YouTube](https://img.shields.io/badge/YouTube_Live_API-FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://developers.google.com/youtube/v3/live)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
-[![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/License-All_Rights_Reserved-red?style=for-the-badge)](LICENSE)
 
 <p align="center">
   <a href="#features">Features</a> •
@@ -411,7 +411,20 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **All Rights Reserved** license.
+
+You are free to use, copy, modify, and distribute this software, provided that:
+
+1. **Attribution** — All copies must include credit to the original author:
+   > "Advanced Restreamer — Created by Ammar Al-Khateeb (عمار الخطيب)"
+
+2. **No Removal of Credits** — You may not remove or alter any copyright notices
+
+3. **All Rights Reserved** — The author reserves all rights not expressly granted
+
+For licensing inquiries, contact: **inex.own@gmail.com**
+
+See the [LICENSE](LICENSE) file for full details.
 
 ---
 
