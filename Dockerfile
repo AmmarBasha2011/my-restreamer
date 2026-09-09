@@ -19,6 +19,6 @@ COPY . .
 # Create playlists directory
 RUN mkdir -p playlists
 
-EXPOSE 3000
+EXPOSE 7860
 
 CMD ["npm", "start"]

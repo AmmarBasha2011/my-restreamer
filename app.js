@@ -8,7 +8,7 @@ const { getAuthUrl, setTokensFromCode, loadCredentials, saveCredentials } = requ
 const { startNon24Stream, stopNon24Stream, scheduleStream, unscheduleStream, isStreaming, initializeScheduledJobs } = require('./scheduler');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 7860;
 
 // --- FILE PATHS ---
 const PLAYLISTS_DIR = path.join(__dirname, 'playlists');
