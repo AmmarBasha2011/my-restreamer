@@ -473,30 +473,8 @@
         </div>
         <div class="card-body">
           ${scheduleHtml}
-          <strong>Playlist (${dest.playlist.length} videos)</strong>
-          <ul id="playlist-${dest.id}">
-            ${dest.playlist.length > 0 
-              ? dest.playlist.map(f => `<li class="playlist-item"><span>${f}</span></li>`).join('') 
-              : '<li class="empty-state">Empty - Upload videos below</li>'}
-          </ul>
         </div>
         <div class="card-footer">
-          <form class="upload-form" data-id="${dest.id}">
-            <strong>Upload Video</strong>
-            <input type="file" name="video" accept="video/mp4,video/webm,video/quicktime" required>
-            <button type="submit" ${isStreaming ? 'disabled' : ''}>📤 Upload</button>
-          </form>
-          
-          <hr class="section-divider">
-          
-          <form class="youtube-form" data-id="${dest.id}">
-            <strong>Add from YouTube URL</strong>
-            <input type="text" name="url" placeholder="https://www.youtube.com/watch?v=..." required>
-            <button type="submit" ${isStreaming ? 'disabled' : ''}>📥 Add From URL</button>
-          </form>
-          
-          <hr class="section-divider">
-          
           <div class="btn-group" style="justify-content: space-between;">
             <div>
               <button class="success" onclick="startStream('${dest.id}')" ${isStreaming ? 'disabled' : ''}>
@@ -520,54 +498,9 @@
         const destinations = await api.get('/api/destinations');
         grid.innerHTML = '';
         destinations.forEach(dest => grid.appendChild(createChannelCard(dest)));
-        attachUploadHandlers();
-        attachYoutubeHandlers();
       } catch (err) {
         showToast('Error fetching data.', true);
       }
-    }
-
-    function attachUploadHandlers() {
-      document.querySelectorAll('.upload-form').forEach(form => {
-        form.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const id = form.dataset.id;
-          const formData = new FormData(form);
-          const btn = form.querySelector('button');
-          btn.textContent = 'Uploading...';
-          btn.disabled = true;
-          const response = await fetch(`/api/upload/${id}`, { method: 'POST', body: formData });
-          showToast(await response.text(), !response.ok);
-          btn.textContent = '📤 Upload';
-          btn.disabled = false;
-          if (response.ok) {
-            form.reset();
-            refreshDestinations();
-          }
-        });
-      });
-    }
-
-    function attachYoutubeHandlers() {
-      document.querySelectorAll('.youtube-form').forEach(form => {
-        form.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const id = form.dataset.id;
-          const url = form.querySelector('input[name="url"]').value;
-          const btn = form.querySelector('button');
-          btn.textContent = 'Downloading...';
-          btn.disabled = true;
-
-          const response = await api.post(`/api/youtube/add/${id}`, { url });
-          showToast(await response.text(), !response.ok);
-          
-          btn.textContent = '📥 Add From URL';
-          btn.disabled = false;
-          if (response.ok) {
-            form.reset();
-          }
-        });
-      });
     }
 
     // --- ACTIONS ---
