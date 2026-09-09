@@ -4,11 +4,42 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const session = require('express-session');
 const { getAuthUrl, setTokensFromCode } = require('./youtube-api');
 const { startNon24Stream, stopNon24Stream, scheduleStream, unscheduleStream, isStreaming, initializeScheduledJobs, loadCredentials, saveCredentials } = require('./scheduler');
 
 const app = express();
 const PORT = process.env.PORT || 7860;
+
+// --- AUTH CONFIGURATION ---
+const AUTH_USERNAME = process.env.USERNAME || 'admin';
+const AUTH_PASSWORD = process.env.PASSWORD || 'admin';
+const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+
+// --- SESSION MIDDLEWARE ---
+app.use(session({
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: false, // Set to true in production with HTTPS
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
+// --- AUTH MIDDLEWARE ---
+const requireAuth = (req, res, next) => {
+  if (req.session && req.session.authenticated) {
+    return next();
+  }
+  // For API routes, return 401
+  if (req.path.startsWith('/api/') || req.path === '/auth' || req.path === '/auth/callback') {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  // For page routes, redirect to login
+  res.redirect('/login');
+};
 
 // --- FILE PATHS ---
 const PLAYLISTS_DIR = path.join(__dirname, 'playlists');
@@ -43,6 +74,119 @@ const saveDestinations = () => {
 // --- MIDDLEWARE ---
 app.use(express.json());
 app.use(express.static('public'));
+
+// --- LOGIN PAGE ---
+app.get('/login', (req, res) => {
+  if (req.session.authenticated) {
+    return res.redirect('/');
+  }
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Login - Advanced Restreamer</title>
+      <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          background: linear-gradient(135deg, #6f42c1, #0d6efd);
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .login-box {
+          background: white;
+          padding: 3rem;
+          border-radius: 16px;
+          box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+          width: 100%;
+          max-width: 400px;
+        }
+        h1 { color: #6f42c1; margin-bottom: 0.5rem; font-size: 1.5rem; }
+        p { color: #6c757d; margin-bottom: 2rem; font-size: 0.9rem; }
+        label { display: block; font-weight: 600; margin-bottom: 0.3rem; color: #495057; font-size: 0.85rem; }
+        input {
+          width: 100%;
+          padding: 0.8rem;
+          border: 2px solid #e9ecef;
+          border-radius: 8px;
+          margin-bottom: 1.2rem;
+          font-size: 1rem;
+          transition: border-color 0.2s;
+        }
+        input:focus { outline: none; border-color: #6f42c1; }
+        button {
+          width: 100%;
+          padding: 0.9rem;
+          background: linear-gradient(135deg, #6f42c1, #0d6efd);
+          color: white;
+          border: none;
+          border-radius: 8px;
+          font-size: 1rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(111,66,193,0.4); }
+        .error { background: #fee; color: #c33; padding: 0.8rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.85rem; display: none; }
+      </style>
+    </head>
+    <body>
+      <div class="login-box">
+        <h1>🚀 Advanced Restreamer</h1>
+        <p>Please sign in to continue</p>
+        <div class="error" id="error"></div>
+        <form id="loginForm">
+          <label>Username</label>
+          <input type="text" id="username" required autofocus>
+          <label>Password</label>
+          <input type="password" id="password" required>
+          <button type="submit">Sign In</button>
+        </form>
+      </div>
+      <script>
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const username = document.getElementById('username').value;
+          const password = document.getElementById('password').value;
+          const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+          });
+          if (res.ok) {
+            window.location.href = '/';
+          } else {
+            const err = document.getElementById('error');
+            err.textContent = 'Invalid username or password';
+            err.style.display = 'block';
+          }
+        });
+      </script>
+    </body>
+    </html>
+  `);
+});
+
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body;
+  if (username === AUTH_USERNAME && password === AUTH_PASSWORD) {
+    req.session.authenticated = true;
+    return res.json({ success: true });
+  }
+  res.status(401).json({ error: 'Invalid credentials' });
+});
+
+app.get('/logout', (req, res) => {
+  req.session.destroy();
+  res.redirect('/login');
+});
+
+// --- PROTECTED ROUTES ---
+app.use(requireAuth);
 
 // --- MULTER STORAGE ---
 const storage = multer.diskStorage({
