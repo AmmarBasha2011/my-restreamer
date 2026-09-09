@@ -411,18 +411,23 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📄 License
 
-This project is licensed under the **All Rights Reserved** license.
+This project is **open source and free to use**. All rights are reserved by the author.
 
-You are free to use, copy, modify, and distribute this software, provided that:
+### ✅ Permitted (Free of Charge)
+- Use the Software for personal, non-commercial purposes
+- Study, learn from, and modify the Software for your own use
 
-1. **Attribution** — All copies must include credit to the original author:
-   > "Advanced Restreamer — Created by Ammar Al-Khateeb (عمار الخطيب)"
+### ❌ Not Permitted (Without Explicit Written Permission)
+- **Distribution** — Sharing, sublicensing, or making the Software available to third parties
+- **Commercial Use** — Selling, renting, leasing, or monetizing the Software
+- **Public Hosting** — Hosting on platforms accessible to the public
 
-2. **No Removal of Credits** — You may not remove or alter any copyright notices
+### 📝 Attribution
+All copies must include:
+> "Advanced Restreamer — Created by Ammar Al-Khateeb (عمار الخطيب)"
 
-3. **All Rights Reserved** — The author reserves all rights not expressly granted
-
-For licensing inquiries, contact: **inex.own@gmail.com**
+### 📧 Contact
+For licensing inquiries: **inex.own@gmail.com**
 
 See the [LICENSE](LICENSE) file for full details.
 
