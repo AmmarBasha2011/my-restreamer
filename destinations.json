@@ -87,5 +87,174 @@
       "description": "تلاوة خاشعة لسور الملك والتوحيد بصوت القارئ عمار الخطيب",
       "categoryId": "10"
     }
+  },
+  {
+    "id": "quran-06-friday",
+    "name": "الجمعة المباركة",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 10 * * 5",
+      "title": "الجمعة المباركة — سورة السجدة والعنكبوت | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسورتي السجدة والعنكبوت بصوت القارئ عمار الخطيب",
+      "categoryId": "10"
+    }
+  },
+  {
+    "id": "quran-07-saturday",
+    "name": "سبت النور",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 11 * * 6",
+      "title": "سبت النور — سورة فاطر والدخان | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسورتي فاطر والدخان بصوت القارئ عمار الخطيب",
+      "categoryId": "10"
+    }
+  },
+  {
+    "id": "quran-08-sunday",
+    "name": "أحد العباد",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 14 * * 0",
+      "title": "أحد العباد — سورة الجاثية والفتح | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسورتي الجاثية والفتح بصوت القارئ عمار الخطيب",
+      "categoryId": "10"
+    }
+  },
+  {
+    "id": "quran-09-monday",
+    "name": "اثنين النبي",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 16 * * 1",
+      "title": "اثنين النبي — سورة محمد والحجرات | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسورتي محمد والحجرات بصوت القارئ عمار الخطيب",
+      "categoryId": "10"
+    }
+  },
+  {
+    "id": "quran-10-tuesday",
+    "name": "ثلاثاء الحسبان",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 20 * * 2",
+      "title": "ثلاثاء الحسبان — سورة الزخرف والأحقاف | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسورتي الزخرف والأحقاف بصوت القارئ عمار الخطيب",
+      "categoryId": "10"
+    }
+  },
+  {
+    "id": "quran-11-wednesday",
+    "name": "أربعاء الجنة",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 17 * * 3",
+      "title": "أربعاء الجنة — سورة ق والحديد | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسورتي ق والحديد بصوت القارئ عمار الخطيب",
+      "categoryId": "10"
+    }
+  },
+  {
+    "id": "quran-12-thursday",
+    "name": "خميس الرحمة",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 18 * * 4",
+      "title": "خميس الرحمة — سورة المجادلة والحشر | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسورتي المجادلة والحشر بصوت القارئ عمار الخطيب",
+      "categoryId": "10"
+    }
+  },
+  {
+    "id": "quran-13-every2days-am",
+    "name": "سور العباد",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 9 */2 * *",
+      "title": "سور العباد — الممتحنة والصف والجمعة | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسور العباد بصوت القارئ عمار الخطيب",
+      "categoryId": "10"
+    }
+  },
+  {
+    "id": "quran-14-every2days-pm",
+    "name": "سور الحمد",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 15 */2 * *",
+      "title": "سور الحمد — المنافقون والتغابن والطلاق | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسور الحمد بصوت القارئ عمار الخطيب",
+      "categoryId": "10"
+    }
+  },
+  {
+    "id": "quran-15-every3days-am",
+    "name": "سور الملائكة",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 10 */3 * *",
+      "title": "سور الملائكة — التكوير والإنفطار والمطففين | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسور الملائكة بصوت القارئ عمار الخطيب",
+      "categoryId": "10"
+    }
+  },
+  {
+    "id": "quran-16-every3days-pm",
+    "name": "سور الرسل",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 19 */3 * *",
+      "title": "سور الرسل — الإنشقاق والبروج والغاشية | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسور الرسل بصوت القارئ عمار الخطيب",
+      "categoryId": "10"
+    }
+  },
+  {
+    "id": "quran-17-first-friday",
+    "name": "أول جمعة من الشهر",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 10 1-7 * 5",
+      "title": "أول جمعة من الشهر — سورة السجدة والعنكبوت | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لسورتي السجدة والعنكبوت بصوت القارئ عمار الخطيب",
+      "categoryId": "10"
+    }
+  },
+  {
+    "id": "quran-18-last-day",
+    "name": "آخر يوم في الشهر",
+    "key": null,
+    "type": "non24",
+    "schedule": {
+      "mode": "scheduled",
+      "cron": "0 23 28-31 * *",
+      "title": "آخر يوم في الشهر — مراجعة | القارئ عمار الخطيب",
+      "description": "تلاوة خاشعة لمراجعة بصوت القارئ عمار الخطيب",
+      "categoryId": "10"
+    }
   }
 ]
